@@ -11,15 +11,17 @@ Zero third-party runtime dependencies. MIT licensed.
 - A conformance contract (`vsl_core.conformance`) so a third party can build an adapter for a framework this package has never heard of, and know mechanically whether they built it correctly.
 
 **Is not:**
-- A framework adapter. This package ships no OpenAI Agents SDK, LangGraph, or LangChain integration. Those live in separate `vsl-<framework>` packages, out of scope here.
+- A framework adapter. This package ships no OpenAI Agents SDK, LangGraph, or LangChain integration. Those live in separate `vsl-<framework>` packages, out of scope here. [`vsl-langgraph`](https://github.com/4vish/VSL-Langgraph) is a real one — conformance-suite green, with worked examples including a retrofit onto an existing, unfamiliar, third-party codebase (not just built-from-scratch demos).
 - A model integration of any kind. It never imports `openai`, `anthropic`, or any other model-provider SDK.
 - A finished, validated detection system. See the catalog section below — most of what it contains is explicitly unvalidated.
 
-If you're building an adapter for a specific framework, see [Building an adapter](#building-an-adapter).
+If you're building an adapter for a specific framework, see [Building an adapter](#building-an-adapter) below, or start from [`vsl-langgraph`](https://github.com/4vish/VSL-Langgraph)'s source as a real, working reference — its own `docs/` also cover lessons that generalize past LangGraph specifically (see `beyond-the-gate.md` and `dos-and-donts.md`).
 
 ## Getting started (including with an AI coding assistant)
 
 [`docs/building-with-vsl-core.md`](docs/building-with-vsl-core.md) is the guide for going from "I have an agent, or an idea for one" to working code: how to find the decision points that actually need governing, which parts of the flow are automatic versus something you write yourself, and a domain-agnostic project scaffold with a worked example. Its companion, [`docs/vsl-core-primitives.json`](docs/vsl-core-primitives.json), is the same material as exact, structured facts — every class, field, and code sample in it has been executed against the real package. Both are written to be handed directly to an AI coding assistant (Claude Code, Codex, or similar) as reference material — no special setup required, though pointing your own project's `CLAUDE.md`/equivalent at them is what makes an assistant reach for them without being asked each time.
+
+Stuck on a specific error, not just getting started? [`docs/troubleshooting.md`](docs/troubleshooting.md) is the human-readable version of the JSON's `common_mistakes` — real, reproduced errors (not guessed), with the exact exception text and the fix.
 
 ## How this relates to governance frameworks (OWASP, NIST, EU AI Act, and others)
 
@@ -172,7 +174,15 @@ A framework adapter must implement `vsl_core.conformance.protocol.VSLAdapter` (`
 
 Deliberately absent from this list: writing to `VerbaLedger`. Ledger writes are the calling application's responsibility, never the adapter's — see [The ledger doesn't write itself](#the-ledger-doesnt-write-itself-read-this-before-assuming-an-audit-trail-exists) above. A conformant adapter should not call `ledger.write*` internally; doing so would silently couple gate compilation to a logging policy the application may not want.
 
-`vsl_core.conformance.reference_adapter.PlainPythonReferenceAdapter` is the minimal reference implementation — proof the contract is satisfiable at all, not merely specified on paper.
+`vsl_core.conformance.reference_adapter.PlainPythonReferenceAdapter` is the minimal reference implementation — proof the contract is satisfiable at all, not merely specified on paper. [`vsl-langgraph`](https://github.com/4vish/VSL-Langgraph) is the minimal *framework* implementation, for the same reason — read `src/vsl_langgraph/adapter.py` alongside `PlainPythonReferenceAdapter` to see how little actually changes between them, and why: most frameworks have nothing framework-specific to compile a gate *into*.
+
+## Calling the compiled gate: two real integration shapes
+
+Compiling a gate is the framework-agnostic half of the story. *Where* and *how* you actually call the resulting gate depends entirely on how the application you're integrating with is shaped — the conformance contract says nothing about this, on purpose, because it genuinely varies. Two shapes, both real, both verified against actual running code, not just described:
+
+**One hook per guarded action.** If the framework gives you a natural per-action extension point — a node in a graph, a middleware slot, a decorator — wrap that action so the gate is checked immediately before it runs, and route around a denial the way the framework already routes. This is the common case, and it's what [`vsl-langgraph`](https://github.com/4vish/VSL-Langgraph)'s `gated_node`/`route_on_denial` helpers assume.
+
+**No per-action hook — call the gate directly inside whatever dispatch point already exists.** Some real applications route every action through one shared dispatcher instead — e.g. a single "execute whichever tool the model picked" function, common in tool-calling agents — rather than one hook per action. There's nothing to *wrap* in that shape. The compiled gate is still just `async def gate(candidate_input) -> None`, so you call it directly, inline, immediately before the specific action you're guarding that call site, and catch the exception yourself. No adapter change needed — the gate doesn't know or care how it's called, which is exactly why this works without modification. Proven on a real, unfamiliar, third-party production LangGraph template that turned out to use a single shared tool dispatcher, not one node per tool — see [`building-with-vsl-core.md`](docs/building-with-vsl-core.md#retrofitting-an-existing-agent-a-real-case-study) for the full case study.
 
 ## Install
 

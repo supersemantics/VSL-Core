@@ -51,7 +51,7 @@ Construct → compile → call → log → escalate. This is the same five-step 
 gate_spec = PreNode(name=..., monitor=..., assurance_basis=AssuranceBasis(...))
 
 # 2. Compile — turns the spec into an actual callable gate
-adapter = PlainPythonReferenceAdapter()  # or a named framework adapter
+adapter = PlainPythonReferenceAdapter()  # or a named framework adapter, e.g. vsl_langgraph.LangGraphAdapter()
 gate = adapter.compile_pre_node(gate_spec)
 
 # 3. Call — immediately before the real action
@@ -109,3 +109,56 @@ Prompt: *"Build me a deterministic agent for a customer support bot that can loo
 - `tests/`: one test proving `refund_within_policy` blocks an out-of-policy refund, one proving it passes a valid one, same pair for the email gate.
 
 That's the whole procedure, run once, end to end, on a use case this document didn't already know about.
+
+## Retrofitting an existing agent: a real case study
+
+The worked example above is greenfield — a use case handed to a blank project. Most real adoption isn't that: it's adding governance to an agent that already exists, built by someone else, with an architecture you don't get to choose. That's a different exercise, and this document didn't have a worked example for it until this one.
+
+**The real target**: [`wassim249/fastapi-langgraph-agent-production-ready-template`](https://github.com/wassim249/fastapi-langgraph-agent-production-ready-template) — MIT licensed, 2.5k stars, actively maintained, unfamiliar going in. Forked to [`4vish/fastapi-langgraph-agent-production-ready-template`](https://github.com/4vish/fastapi-langgraph-agent-production-ready-template) via [`vsl-langgraph`](https://github.com/4vish/VSL-Langgraph). The retrofit added [`vsl-core`](https://github.com/4vish/VSL-Core) and `vsl-langgraph` as real dependencies to someone else's existing `pyproject.toml`, not a fresh project.
+
+**What didn't match the greenfield assumptions:**
+- The classify-and-build steps above assume you're writing `tools.py`/`agent.py` yourself. Here, the tools and the agent already existed — the only genuinely new code was one new tool (`send_refund_email`) and roughly a dozen lines added to an existing method.
+- The architecture assumption baked into `vsl-langgraph`'s `gated_node` helper — one hook per guarded action — didn't hold. This codebase routes every tool call through a single shared dispatcher (`_execute_tool`, matching whichever tool the model picked against a lookup table), not one node per tool. See [README.md's "Calling the compiled gate"](../README.md#calling-the-compiled-gate-two-real-integration-shapes) for how that changed the integration, not the compilation.
+
+**Classify the one new action** (same heuristic as always): `send_refund_email` sends a real email — an external side effect, and per the signal table above, that's normally a `PreNode`. Here it became an `Invariant` instead, deliberately: the actual check chosen — *the recipient must be an address the human already typed, not one the model introduced* — isn't a soft, retryable confidence threshold. It's a hard "must be true, no exceptions" condition, which is exactly what `Invariant` is for. Same action type as the greenfield example's `send_email`, different primitive, because the specific check being encoded differs — the signal table names the common case, not a fixed rule.
+
+**Why this specific check.** The codebase's own `ask_human` tool already documented the risk in its own docstring — *"use this tool ... before taking a significant action (e.g. ... sending emails ... or any irreversible operation)"* — but nothing enforced it. Whether the model asked first was entirely up to its own discretion. The `Invariant` closes exactly that gap: it holds regardless of what the model decides, which is the actual point of pre-commitment (F1) — a check that runs whether or not the agent's own judgment can be trusted on a given turn.
+
+**Construct, compile, call** — steps 1-3 of the five, real code:
+
+```python
+async def _recipient_was_user_specified(candidate: dict) -> bool:
+    recipient = candidate["recipient"]
+    human_text = " ".join(str(m.content) for m in candidate["messages"] if isinstance(m, HumanMessage))
+    return recipient in human_text
+
+_email_recipient_invariant = Invariant(
+    name="email-recipient-user-specified",
+    description="send_refund_email's recipient must appear in text the human actually typed -- non-bypassable.",
+    rule=_recipient_was_user_specified,
+    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL),
+)
+_email_recipient_gate = LangGraphAdapter().compile_invariant(_email_recipient_invariant)
+```
+
+Called directly inside the existing dispatcher — no per-tool node to wrap:
+
+```python
+if tool_call["name"] == GOVERNED_TOOL_NAME:
+    try:
+        await _email_recipient_gate({**tool_call["args"], "messages": state.messages})
+    except InvariantViolation as exc:
+        return ToolMessage(content=f"BLOCKED by governance: {exc.reason}", ...)
+tool_result = await self.tools_by_name[tool_call["name"]].ainvoke(tool_call["args"])
+```
+
+**Proof, not assertion** — run against the real, unmocked agent method:
+
+```
+legit recipient     -> Email sent to alice@example.com.
+injected recipient  -> BLOCKED by governance: Invariant 'email-recipient-user-specified' violated
+```
+
+**What this case study doesn't cover**, so as not to overclaim: it stops at step 3 (call). No `VerbaLedger` writes, no `TerminalState`/escalation path were added to this fork — the retrofit's scope was proving construct/compile/call fit into an unfamiliar dispatcher shape, not the full five-step lifecycle. For steps 4-5 (log, escalate) worked end-to-end, see this document's earlier worked example, or [`vsl-langgraph`'s own `beyond-the-gate.md`](https://github.com/4vish/VSL-Langgraph/blob/main/docs/beyond-the-gate.md#the-full-lifecycle-log-and-escalate) for a real, run, `VerbaCertificate`-issuing example.
+
+Full writeup with the complete diff and a diagram of the dispatch flow: the fork's own [`docs/governance.md`](https://github.com/4vish/fastapi-langgraph-agent-production-ready-template/blob/master/docs/governance.md).
