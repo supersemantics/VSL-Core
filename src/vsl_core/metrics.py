@@ -83,10 +83,29 @@ class AssuranceBasis:
     extension, not a spec fact: a check that runs early but does nothing to
     the distribution isn't governance in the Gamma-sufficiency sense, so it
     is treated the same as output-layer (LOW) rather than left undefined.
+
+    __post_init__ requires f2_modification to actually be an F2Modification
+    member. Before this check existed, a caller could write
+    f2_modification=None (or any other garbage value) and derived_level
+    would silently fall through every branch to LOW -- an accidental,
+    unflagged LOW indistinguishable from a deliberate one. This does not
+    make derived_level *correct* (nothing here can verify a stated FULL/
+    PARTIAL/INDIRECT/NONE reflects what the gated mechanism actually does --
+    see F2Modification's own docstring), it only guarantees the value was a
+    real, deliberate choice from the enum rather than an unnoticed accident.
     """
 
     f1_pre_commitment: bool
     f2_modification: F2Modification
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.f2_modification, F2Modification):
+            raise TypeError(
+                f"AssuranceBasis.f2_modification must be an F2Modification member "
+                f"(FULL/PARTIAL/INDIRECT/NONE), got {self.f2_modification!r}. "
+                "There is no safe default -- omitting or guessing this value is "
+                "exactly the mistake this check exists to catch."
+            )
 
     @property
     def derived_level(self) -> AssuranceLevel:

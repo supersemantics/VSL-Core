@@ -131,6 +131,18 @@ def test_assurance_basis_output_filtering_is_low():
     assert basis.derived_level == AssuranceLevel.LOW
 
 
+def test_assurance_basis_rejects_none_f2_modification():
+    # f2_modification=None must not silently fall through derived_level to
+    # an unflagged LOW -- that was a real, previously-shipped bug.
+    with pytest.raises(TypeError):
+        AssuranceBasis(f1_pre_commitment=True, f2_modification=None)
+
+
+def test_assurance_basis_rejects_non_enum_f2_modification():
+    with pytest.raises(TypeError):
+        AssuranceBasis(f1_pre_commitment=True, f2_modification="FULL")
+
+
 def test_beta_is_a_bare_value_holder():
     beta = Beta(value=2.5)
     assert beta.value == 2.5
