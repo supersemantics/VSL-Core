@@ -1,7 +1,7 @@
 {
   "package": {
     "import_name": "vsl_core",
-    "install": "pip install git+https://github.com/4vish/VSL-Core.git",
+    "install": "pip install git+https://github.com/supersemantics/VSL-Core.git",
     "requires_python": ">=3.10",
     "dependencies": "none (zero third-party runtime dependencies, stdlib only)",
     "not_a_runtime_engine": "vsl-core does not intercept anything automatically. Every gate call, ledger write, and escalation is explicit code the developer (or a framework adapter) writes and calls."
