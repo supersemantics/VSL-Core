@@ -84,21 +84,30 @@ class AssuranceBasis:
     the distribution isn't governance in the Gamma-sufficiency sense, so it
     is treated the same as output-layer (LOW) rather than left undefined.
 
-    __post_init__ requires f2_modification to actually be an F2Modification
-    member. Before this check existed, a caller could write
-    f2_modification=None (or any other garbage value) and derived_level
-    would silently fall through every branch to LOW -- an accidental,
-    unflagged LOW indistinguishable from a deliberate one. This does not
-    make derived_level *correct* (nothing here can verify a stated FULL/
-    PARTIAL/INDIRECT/NONE reflects what the gated mechanism actually does --
-    see F2Modification's own docstring), it only guarantees the value was a
-    real, deliberate choice from the enum rather than an unnoticed accident.
+    __post_init__ requires f1_pre_commitment to actually be a bool and
+    f2_modification to actually be an F2Modification member. Before these
+    checks existed, a caller could write f1_pre_commitment=None (falsy, so
+    `not self.f1_pre_commitment` silently derives LOW) or
+    f2_modification=None (or any other garbage value, so derived_level
+    would silently fall through every branch to LOW) -- either way, an
+    accidental, unflagged LOW indistinguishable from a deliberate one. This
+    does not make derived_level *correct* (nothing here can verify a stated
+    F1/F2 fact reflects what the gated mechanism actually does -- see
+    F2Modification's own docstring), it only guarantees both values were a
+    real, deliberate choice rather than an unnoticed accident.
     """
 
     f1_pre_commitment: bool
     f2_modification: F2Modification
 
     def __post_init__(self) -> None:
+        if not isinstance(self.f1_pre_commitment, bool):
+            raise TypeError(
+                f"AssuranceBasis.f1_pre_commitment must be a bool, got "
+                f"{self.f1_pre_commitment!r}. There is no safe default -- "
+                "omitting or guessing this value is exactly the mistake this "
+                "check exists to catch."
+            )
         if not isinstance(self.f2_modification, F2Modification):
             raise TypeError(
                 f"AssuranceBasis.f2_modification must be an F2Modification member "
@@ -123,6 +132,25 @@ class GammaEstimate:
     """A point estimate of Gamma (Governance-to-Drift Ratio) plus its
     estimation-error bound, so sufficiency can be judged against the
     Robust Gamma Threshold rather than the raw estimate.
+
+    Three facts a caller needs at the point of use, not just discoverable
+    by reading sufficient()'s body or the module-level threshold constant:
+
+    1. sufficient() gates on robust_gamma(), never on raw gamma_hat. A
+       gamma_hat that clears `threshold` can still fail sufficient() once
+       delta_estimation_error is applied -- if you're only logging/
+       monitoring gamma_hat, you will see passes that the gate itself
+       treats as denials.
+    2. The default threshold (ROBUST_GAMMA_DEFAULT_THRESHOLD = 1.1) already
+       encodes a 10% estimation-error tolerance (delta = 0.1) baked into the
+       comparison target, not a margin you additionally need to account for
+       yourself when choosing delta_estimation_error.
+    3. delta_estimation_error is not a measured property of the monitor --
+       it is how the monitor's author declares reduced confidence in their
+       own gamma_hat estimate. Leaving it at the 0.0 default is itself a
+       claim ("this gamma_hat is exact"), not a neutral/safe absence of
+       information; set it deliberately when the estimation method is
+       noisier than that.
     """
 
     gamma_hat: float
