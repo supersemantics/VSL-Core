@@ -143,6 +143,22 @@ def test_assurance_basis_rejects_non_enum_f2_modification():
         AssuranceBasis(f1_pre_commitment=True, f2_modification="FULL")
 
 
+def test_assurance_basis_rejects_none_f1_pre_commitment():
+    # f1_pre_commitment=None is falsy, so `not self.f1_pre_commitment` would
+    # silently derive LOW without this check -- the same unflagged-LOW bug
+    # shape as f2_modification=None, just on the other field.
+    with pytest.raises(TypeError):
+        AssuranceBasis(f1_pre_commitment=None, f2_modification=F2Modification.FULL)
+
+
+def test_assurance_basis_rejects_non_bool_f1_pre_commitment():
+    # bool is a subclass of int in Python, so this also confirms the check
+    # uses isinstance(x, bool) specifically rather than isinstance(x, int),
+    # which would wrongly accept 1/0 as valid.
+    with pytest.raises(TypeError):
+        AssuranceBasis(f1_pre_commitment=1, f2_modification=F2Modification.FULL)
+
+
 def test_beta_is_a_bare_value_holder():
     beta = Beta(value=2.5)
     assert beta.value == 2.5
