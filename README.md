@@ -152,6 +152,8 @@ Three additions to the ledger, all backward-compatible — existing single-decis
 
 **Cross-process safety.** `JsonlLedgerStore.append()`'s read-last-entry-then-write sequence is now guarded by an OS-level advisory lock (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows) on a sibling `.lock` file, not just the in-process `threading.RLock`. Two separate `JsonlLedgerStore` instances — in one process or several — writing to the same file can no longer race and corrupt the sequence/hash chain.
 
+**A third `LedgerStore`.** `InMemoryLedgerStore`/`JsonlLedgerStore` are the two implementations in this package; a hosted, durable, multi-tenant option lives in a separate package, [`vsl-core-ledger-client`](https://github.com/supersemantics/VSL-Core-ledger-client) (kept out of `vsl-core` itself so this package's zero-dependency guarantee holds — see "Verifying the zero-dependency / framework-agnostic guarantee" below). `VerbaLedger` doesn't need to know or care which `LedgerStore` it's holding.
+
 ## The Drift Class / Stabilisation Operator catalog (`vsl_core.catalog`)
 
 Loads two real data files (Paper 5, "Toward a Basis Representation of Drift Forensics"): 45 Drift Classes across five categories (external, internal, systemic, linguistic, authority) tagged by evidence tier (A = well evidenced, B = theoretically grounded, C = hypothesised, D = a limit class possibly unfixable by any operator), and 10 Stabilisation Operators.
