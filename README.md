@@ -1,8 +1,14 @@
-# vsl-core
+---
+title: vsl-core
+description: Framework-agnostic VSL governance primitives and hash-chained audit ledgers.
+---
+
+## vsl-core
 
 The framework-agnostic and model-agnostic foundation of **VSL** (VERBA Specification Language) — a governance vocabulary for deciding whether an automated system's next action is allowed to happen, and proving that decision was made.
 
-Zero third-party runtime dependencies. MIT licensed.
+Zero required third-party runtime dependencies. Optional immudb storage uses
+the official Python SDK. MIT licensed.
 
 ## What this is — and isn't
 
@@ -148,11 +154,18 @@ Three additions to the ledger, all backward-compatible — existing single-decis
 
 **Schema versioning.** `LedgerEntry.schema_version` records which shape of the entry wrote it (`LEDGER_SCHEMA_VERSION`, currently `"1.0"`). `VerbaLedger.write()` stamps it on every entry it constructs; a bare `LedgerEntry(...)` built directly — or one reconstructed from a persisted entry that predates this field — doesn't silently claim a version it wasn't actually written under.
 
-**Checkpoints.** `VerbaLedger.current_checkpoint()` returns a `LedgerCheckpoint` (`sequence`, `entry_hash`, `checked_at`) — the one fact an external anchoring service would need to independently witness the chain over time. `verify_integrity()` only proves internal consistency of whatever entries the store currently holds; it can't detect truncation or wholesale replacement with an older, still-consistent snapshot. vsl-core exposes this value and stops there — it does no anchoring, signing, or networking itself.
+**Checkpoints.** `VerbaLedger.current_checkpoint()` returns a `LedgerCheckpoint` (`sequence`, `entry_hash`, `checked_at`), which an external anchoring service can witness over time. `verify_integrity()` only proves internal consistency of whatever entries the store currently holds; it cannot detect truncation or wholesale replacement with an older, still-consistent snapshot. The optional immudb store also checks local entries against a remote copy during synchronization.
 
 **Cross-process safety.** `JsonlLedgerStore.append()`'s read-last-entry-then-write sequence is now guarded by an OS-level advisory lock (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows) on a sibling `.lock` file, not just the in-process `threading.RLock`. Two separate `JsonlLedgerStore` instances — in one process or several — writing to the same file can no longer race and corrupt the sequence/hash chain.
 
-**A third `LedgerStore`.** `InMemoryLedgerStore`/`JsonlLedgerStore` are the two implementations in this package; a hosted, durable, multi-tenant option lives in a separate package, [`vsl-core-ledger-client`](https://github.com/supersemantics/VSL-Core-ledger-client) (kept out of `vsl-core` itself so this package's zero-dependency guarantee holds — see "Verifying the zero-dependency / framework-agnostic guarantee" below). `VerbaLedger` doesn't need to know or care which `LedgerStore` it's holding.
+**Storage options.** This package includes `InMemoryLedgerStore`,
+`JsonlLedgerStore`, and optional `ImmuDBLedgerStore`. The immudb store writes
+the same hash-chained entries to local JSONL and immudb, with connection
+settings supplied by the application or environment. See
+[immudb ledger storage](docs/immudb-ledger.md) for setup and recovery.
+A hosted, durable, multi-tenant option also lives in the separate
+[`vsl-core-ledger-client`](https://github.com/supersemantics/VSL-Core-ledger-client)
+package. `VerbaLedger` uses the same interface for every store.
 
 ## The Drift Class / Stabilisation Operator catalog (`vsl_core.catalog`)
 

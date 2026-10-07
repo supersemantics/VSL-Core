@@ -41,6 +41,7 @@ from .governance import (
     request_re_enablement,
 )
 from .identity import ClusterKey, Evidence, IdentityKey, Instance
+from .immudb_store import ImmuDBConfig, ImmuDBLedgerStore, ImmuDBSyncError
 from .ledger import (
     DRIFT_DETECTED_KEY,
     GENESIS_HASH,
@@ -115,6 +116,9 @@ __all__ = [
     "LedgerStore",
     "InMemoryLedgerStore",
     "JsonlLedgerStore",
+    "ImmuDBConfig",
+    "ImmuDBLedgerStore",
+    "ImmuDBSyncError",
     "LedgerAuditReport",
     "LedgerCheckpoint",
     "VerbaCertificate",
