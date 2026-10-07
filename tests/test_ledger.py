@@ -1,7 +1,13 @@
 import time
+import json
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
+from vsl_core.immudb_store import ImmuDBConfig, ImmuDBLedgerStore, ImmuDBSyncError
 from vsl_core.exceptions import LedgerIntegrityError
 from vsl_core.ledger import (
     DRIFT_DETECTED_KEY,
@@ -21,6 +27,243 @@ from vsl_core.ledger import (
 def test_bare_module_constants_match_enum_members():
     assert HUMAN_AUTHORISED_TRANSITION is LedgerEntryType.HUMAN_AUTHORISED_TRANSITION
     assert RE_ENABLEMENT is LedgerEntryType.RE_ENABLEMENT
+
+
+class FakeImmuDBClient:
+    def __init__(self):
+        self.values = {}
+        self.writes = 0
+        self.fail = False
+        self.fail_after_commit = False
+
+    def verifiedGet(self, key):
+        if self.fail:
+            raise ConnectionError("offline")
+        if key not in self.values:
+            return None
+        return SimpleNamespace(value=self.values[key], verified=True)
+
+    def verifiedSet(self, key, value):
+        self.values[key] = value
+        self.writes += 1
+        if self.fail_after_commit:
+            raise TimeoutError("response lost")
+        return SimpleNamespace(verified=True)
+
+
+def test_immudb_dual_write_preserves_identical_entries(tmp_path):
+    client = FakeImmuDBClient()
+    config = ImmuDBConfig(username="writer", password="secret")
+    store = ImmuDBLedgerStore(tmp_path / "ledger.jsonl", config, client=client)
+    ledger = VerbaLedger(store)
+    first = ledger.write_monitor(identity_key="sys-1", drift_detected=False)
+    second = ledger.write_monitor(identity_key="sys-2", drift_detected=True)
+    assert [json.loads(value) for value in client.values.values()] == [first.to_dict(), second.to_dict()]
+    assert list(store.entries_for_identity("sys-1")) == [first]
+    assert store.last_entry() == second
+    assert ledger.verify_integrity()
+    assert store.sync() == 0
+    assert client.writes == 2
+
+
+def test_immudb_failure_retains_local_entry_and_restart_syncs(tmp_path):
+    client = FakeImmuDBClient()
+    client.fail = True
+    config = ImmuDBConfig(username="writer", password="secret")
+    path = tmp_path / "ledger.jsonl"
+    store = ImmuDBLedgerStore(path, config, client=client)
+    with pytest.raises(ImmuDBSyncError) as caught:
+        VerbaLedger(store).write_monitor(identity_key="sys-1", drift_detected=False)
+    assert caught.value.entry == store.last_entry()
+    assert len(list(store.all_entries())) == 1
+    client.fail = False
+    reopened = ImmuDBLedgerStore(path, config, client=client)
+    assert reopened.sync() == 1
+    assert reopened.sync() == 0
+    assert len(client.values) == 1
+
+
+def test_immudb_uncertain_commit_is_not_duplicated_on_retry(tmp_path):
+    client = FakeImmuDBClient()
+    client.fail_after_commit = True
+    store = ImmuDBLedgerStore(
+        tmp_path / "ledger.jsonl", ImmuDBConfig(username="writer", password="secret"), client=client
+    )
+    with pytest.raises(ImmuDBSyncError):
+        VerbaLedger(store).write_monitor(identity_key="sys-1", drift_detected=False)
+    client.fail_after_commit = False
+    assert store.sync() == 0
+    assert client.writes == 1
+
+
+def test_immudb_sync_refuses_conflicting_remote_entry(tmp_path):
+    client = FakeImmuDBClient()
+    store = ImmuDBLedgerStore(
+        tmp_path / "ledger.jsonl", ImmuDBConfig(username="writer", password="secret"), client=client
+    )
+    VerbaLedger(store).write_monitor(identity_key="sys-1", drift_detected=False)
+    key = next(iter(client.values))
+    client.values[key] = b"conflicting data"
+    with pytest.raises(LedgerIntegrityError, match="conflicts"):
+        store.sync()
+    assert client.values[key] == b"conflicting data"
+
+
+def test_immudb_sync_refuses_truncated_local_chain(tmp_path):
+    client = FakeImmuDBClient()
+    path = tmp_path / "ledger.jsonl"
+    store = ImmuDBLedgerStore(path, ImmuDBConfig(username="writer", password="secret"), client=client)
+    VerbaLedger(store).write_monitor(identity_key="sys-1", drift_detected=False)
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(LedgerIntegrityError, match="ahead"):
+        store.sync()
+
+
+def test_immudb_sync_refuses_tampered_local_chain(tmp_path):
+    client = FakeImmuDBClient()
+    path = tmp_path / "ledger.jsonl"
+    store = ImmuDBLedgerStore(path, ImmuDBConfig(username="writer", password="secret"), client=client)
+    VerbaLedger(store).write_monitor(identity_key="sys-1", drift_detected=False)
+    path.write_text(path.read_text(encoding="utf-8").replace("sys-1", "sys-9"), encoding="utf-8")
+    with pytest.raises(LedgerIntegrityError, match="corrupted"):
+        store.sync()
+    assert client.writes == 1
+
+
+def test_immudb_config_from_env_and_password_is_not_in_repr(monkeypatch):
+    monkeypatch.setenv("IMMUDB_USERNAME", "writer")
+    monkeypatch.setenv("IMMUDB_PASSWORD", "private-password")
+    monkeypatch.setenv("IMMUDB_PORT", "4322")
+    monkeypatch.setenv("IMMUDB_DATABASE", "auditdb")
+    config = ImmuDBConfig.from_env()
+    assert config.port == 4322
+    assert config.database == "auditdb"
+    assert "private-password" not in repr(config)
+
+
+def test_immudb_config_requires_credentials(monkeypatch):
+    monkeypatch.delenv("IMMUDB_PASSWORD", raising=False)
+    with pytest.raises(ValueError, match="IMMUDB_PASSWORD"):
+        ImmuDBConfig.from_env()
+
+
+def test_immudb_sdk_connection_is_lazy_and_uses_supplied_settings(tmp_path, monkeypatch):
+    client = FakeImmuDBClient()
+    client.login = Mock()
+    client.shutdown = Mock()
+    factory = Mock(return_value=client)
+    root_factory = Mock()
+    monkeypatch.setitem(sys.modules, "immudb", SimpleNamespace(ImmudbClient=factory))
+    monkeypatch.setitem(sys.modules, "immudb.client", SimpleNamespace(PersistentRootService=root_factory))
+    config = ImmuDBConfig(
+        username="writer", password="secret", host="audit-host", port=4322,
+        database="auditdb", timeout=3, public_key_file="server.pem",
+    )
+    with ImmuDBLedgerStore(tmp_path / "ledger.jsonl", config) as store:
+        factory.assert_not_called()
+        assert store.sync() == 0
+        factory.assert_called_once_with(
+            "audit-host:4322", rs=root_factory.return_value, timeout=3, publicKeyFile="server.pem"
+        )
+        root_factory.assert_called_once_with(str(tmp_path / "ledger.jsonl.immudb-state"))
+        client.login.assert_called_once_with("writer", "secret", database=b"auditdb")
+    client.shutdown.assert_called_once()
+
+
+def test_immudb_sdk_login_failure_closes_client(tmp_path, monkeypatch):
+    client = SimpleNamespace(login=Mock(side_effect=ConnectionError("offline")), shutdown=Mock())
+    monkeypatch.setitem(sys.modules, "immudb", SimpleNamespace(ImmudbClient=Mock(return_value=client)))
+    monkeypatch.setitem(sys.modules, "immudb.client", SimpleNamespace(PersistentRootService=Mock()))
+    store = ImmuDBLedgerStore(tmp_path / "ledger.jsonl", ImmuDBConfig(username="writer", password="secret"))
+    with pytest.raises(ImmuDBSyncError):
+        store.sync()
+    client.shutdown.assert_called_once()
+
+
+def test_immudb_read_proof_failure_does_not_overwrite(tmp_path):
+    client = FakeImmuDBClient()
+    store = ImmuDBLedgerStore(
+        tmp_path / "ledger.jsonl", ImmuDBConfig(username="writer", password="secret"), client=client
+    )
+    client.verifiedGet = Mock(return_value=SimpleNamespace(value=b"untrusted", verified=False))
+    with pytest.raises(LedgerIntegrityError, match="proof"):
+        store.sync()
+    assert client.writes == 0
+
+
+def test_immudb_write_proof_failure_reports_committed_local_entry(tmp_path):
+    client = FakeImmuDBClient()
+    client.verifiedSet = Mock(return_value=SimpleNamespace(verified=False))
+    store = ImmuDBLedgerStore(
+        tmp_path / "ledger.jsonl", ImmuDBConfig(username="writer", password="secret"), client=client
+    )
+    with pytest.raises(ImmuDBSyncError) as caught:
+        VerbaLedger(store).write_monitor(identity_key="sys-1", drift_detected=False)
+    assert caught.value.entry == store.last_entry()
+    assert isinstance(caught.value.__cause__, LedgerIntegrityError)
+
+
+def test_immudb_concurrent_stores_share_one_chain(tmp_path):
+    client = FakeImmuDBClient()
+    config = ImmuDBConfig(username="writer", password="secret")
+    path = tmp_path / "ledger.jsonl"
+    stores = [ImmuDBLedgerStore(path, config, client=client) for index in range(4)]
+
+    def write_entry(index):
+        return VerbaLedger(stores[index % 4]).write_monitor(identity_key="sys-1", drift_detected=False)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        entries = list(executor.map(write_entry, range(12)))
+    assert sorted(entry.sequence for entry in entries) == list(range(12))
+    assert len(client.values) == 12
+    assert VerbaLedger(stores[0]).verify_integrity()
+
+
+def test_immudb_namespaces_keep_independent_ledgers_separate(tmp_path):
+    client = FakeImmuDBClient()
+    for namespace in ("agent-one", "agent-two"):
+        config = ImmuDBConfig(username="writer", password="secret", namespace=namespace)
+        store = ImmuDBLedgerStore(tmp_path / (namespace + ".jsonl"), config, client=client)
+        VerbaLedger(store).write_monitor(identity_key=namespace, drift_detected=False)
+    assert len(client.values) == 2
+
+
+@pytest.mark.parametrize("missing_code", ["NOT_FOUND", "UNKNOWN"])
+def test_immudb_grpc_not_found_is_missing_but_other_errors_propagate(tmp_path, missing_code):
+    grpc = pytest.importorskip("grpc")
+
+    class RemoteError(grpc.RpcError):
+        def __init__(self, status, message="key not found"):
+            self.status = status
+            self.message = message
+
+        def code(self):
+            return self.status
+
+        def details(self):
+            return self.message
+
+    client = FakeImmuDBClient()
+    client.verifiedGet = Mock(side_effect=RemoteError(getattr(grpc.StatusCode, missing_code)))
+    store = ImmuDBLedgerStore(
+        tmp_path / "ledger.jsonl", ImmuDBConfig(username="writer", password="secret"), client=client
+    )
+    VerbaLedger(store).write_monitor(identity_key="sys-1", drift_detected=False)
+    assert client.writes == 1
+    for status, message in (
+        (grpc.StatusCode.PERMISSION_DENIED, "key not found"),
+        (grpc.StatusCode.UNKNOWN, "connection failed"),
+    ):
+        client.verifiedGet.side_effect = RemoteError(status, message)
+        with pytest.raises(ImmuDBSyncError):
+            store.sync()
+    assert client.writes == 1
+
+
+@pytest.mark.parametrize("settings", [{"port": 0}, {"timeout": 0}, {"timeout": float("nan")}, {"namespace": " "}])
+def test_immudb_config_rejects_invalid_settings(settings):
+    with pytest.raises(ValueError):
+        ImmuDBConfig(username="writer", password="secret", **settings)
 
 
 def test_seven_entry_types_exist():

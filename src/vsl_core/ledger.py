@@ -396,16 +396,20 @@ class JsonlLedgerStore:
 
     def append(self, entry: LedgerEntry) -> LedgerEntry:
         with self._lock, _CrossProcessFileLock(self.path):
-            last = self.last_entry()
-            sequence = 0 if last is None else last.sequence + 1
-            prev_hash = GENESIS_HASH if last is None else last.entry_hash
-            sealed = _seal(entry, sequence, prev_hash)
-            with self.path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(sealed.to_dict(), sort_keys=True) + "\n")
-                f.flush()
-                if self.fsync:
-                    os.fsync(f.fileno())
-            return sealed
+            return self._append_locked(entry)
+
+    def _append_locked(self, entry: LedgerEntry) -> LedgerEntry:
+        """Append while the caller holds the thread and cross-process locks."""
+        last = self.last_entry()
+        sequence = 0 if last is None else last.sequence + 1
+        prev_hash = GENESIS_HASH if last is None else last.entry_hash
+        sealed = _seal(entry, sequence, prev_hash)
+        with self.path.open("a", encoding="utf-8") as output:
+            output.write(json.dumps(sealed.to_dict(), sort_keys=True) + "\n")
+            output.flush()
+            if self.fsync:
+                os.fsync(output.fileno())
+        return sealed
 
 
 @dataclass(frozen=True)
