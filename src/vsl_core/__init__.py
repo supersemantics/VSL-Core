@@ -44,10 +44,13 @@ from .identity import ClusterKey, Evidence, IdentityKey, Instance
 from .immudb_store import ImmuDBConfig, ImmuDBLedgerStore, ImmuDBSyncError
 from .ledger import (
     DRIFT_DETECTED_KEY,
+    GATE_ALLOWED_KEY,
     GENESIS_HASH,
     HUMAN_AUTHORISED_TRANSITION,
     LEDGER_SCHEMA_VERSION,
+    PRIMITIVE_NAME_KEY,
     RE_ENABLEMENT,
+    RULES_VERSION_KEY,
     VERIFICATION_RESULT_KEY,
     InMemoryLedgerStore,
     JsonlLedgerStore,
@@ -77,8 +80,9 @@ from .metrics import (
     GammaEstimate,
     Threshold,
 )
+from .rules_version import ASSURANCE_RULES_VERSION
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
@@ -127,8 +131,13 @@ __all__ = [
     "RE_ENABLEMENT",
     "DRIFT_DETECTED_KEY",
     "VERIFICATION_RESULT_KEY",
+    "PRIMITIVE_NAME_KEY",
+    "GATE_ALLOWED_KEY",
+    "RULES_VERSION_KEY",
     "VerificationResult",
     "LEDGER_SCHEMA_VERSION",
+    # assurance rules
+    "ASSURANCE_RULES_VERSION",
     # metrics
     "AssuranceLevel",
     "AssuranceBasis",

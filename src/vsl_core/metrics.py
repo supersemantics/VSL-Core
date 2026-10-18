@@ -14,6 +14,11 @@ from enum import Enum
 # to a 10% relative estimation-error tolerance (delta = 0.1). This is the
 # maximum estimation error the framework can absorb while still guaranteeing
 # Gamma* > 1, not an arbitrarily rounded-up safety margin.
+#
+# A threshold is therefore 1 + (the estimation-error allowance it already
+# includes). GammaEstimate.sufficient() treats it as the minimum allowance:
+# a monitor's own delta_estimation_error only raises the bar when it exceeds
+# that allowance (see sufficient()).
 ROBUST_GAMMA_DEFAULT_THRESHOLD: float = 1.1
 
 # The source spec's stated recommendation for high-stakes deployments
@@ -136,15 +141,18 @@ class GammaEstimate:
     Three facts a caller needs at the point of use, not just discoverable
     by reading sufficient()'s body or the module-level threshold constant:
 
-    1. sufficient() gates on robust_gamma(), never on raw gamma_hat. A
-       gamma_hat that clears `threshold` can still fail sufficient() once
-       delta_estimation_error is applied -- if you're only logging/
-       monitoring gamma_hat, you will see passes that the gate itself
-       treats as denials.
+    1. sufficient() requires gamma_hat to be strictly greater than
+       required_gamma_hat(threshold) = max(threshold, 1 + delta). That is
+       the source spec's robust condition (Gamma* = gamma_hat / (1 + delta)
+       > 1), with the threshold as the minimum estimation-error allowance.
+       Exactly on the bar does not pass.
     2. The default threshold (ROBUST_GAMMA_DEFAULT_THRESHOLD = 1.1) already
-       encodes a 10% estimation-error tolerance (delta = 0.1) baked into the
-       comparison target, not a margin you additionally need to account for
-       yourself when choosing delta_estimation_error.
+       encodes a 10% estimation-error tolerance (delta = 0.1). A
+       delta_estimation_error at or below that allowance does not raise the
+       bar again; only a larger one does (delta = 0.2 against 1.1 requires
+       gamma_hat > 1.2). Before rules version 2026.10, sufficient() divided
+       gamma_hat by (1 + delta) and then compared it with the threshold,
+       counting the allowance twice (delta = 0.1 required gamma_hat > 1.21).
     3. delta_estimation_error is not a measured property of the monitor --
        it is how the monitor's author declares reduced confidence in their
        own gamma_hat estimate. Leaving it at the 0.0 default is itself a
@@ -164,14 +172,28 @@ class GammaEstimate:
         """
         return self.gamma_hat * (1.0 / (1.0 + self.delta_estimation_error))
 
+    def required_gamma_hat(self, threshold: float = ROBUST_GAMMA_DEFAULT_THRESHOLD) -> float:
+        """The value gamma_hat must strictly exceed to pass:
+        max(threshold, 1 + delta).
+
+        The threshold is 1 plus the estimation-error allowance it already
+        includes, so this is the larger of that allowance and the monitor's
+        own declared delta_estimation_error.
+        """
+        return max(threshold, 1.0 + self.delta_estimation_error)
+
     def sufficient(self, threshold: float = ROBUST_GAMMA_DEFAULT_THRESHOLD) -> bool:
-        """True iff the robust (worst-case) Gamma exceeds the threshold.
+        """True iff gamma_hat is strictly greater than
+        required_gamma_hat(threshold).
+
+        Whenever this is True, robust_gamma() > 1 also holds: governance
+        beats drift even in the worst case the declared delta allows.
 
         This exact name and signature is load-bearing: it is called
         directly by PlainPythonReferenceAdapter.compile_pre_node and by
         any other adapter's compiled gate.
         """
-        return self.robust_gamma() > threshold
+        return self.gamma_hat > self.required_gamma_hat(threshold)
 
 
 @dataclass(frozen=True)

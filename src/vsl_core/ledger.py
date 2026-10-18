@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Iterator, Protocol
 
 from .exceptions import LedgerIntegrityError
+from .rules_version import ASSURANCE_RULES_VERSION
 
 if sys.platform == "win32":
     import msvcrt
@@ -74,6 +75,13 @@ RE_ENABLEMENT = LedgerEntryType.RE_ENABLEMENT
 DRIFT_DETECTED_KEY: str = "drift_detected"
 VERIFICATION_RESULT_KEY: str = "result"
 
+# Named payload keys of a gate-decision record (VerbaLedger.write_gate_decision).
+# One spelling for every caller, so records from different agents can be read
+# and compared the same way.
+PRIMITIVE_NAME_KEY: str = "primitive_name"
+GATE_ALLOWED_KEY: str = "allowed"
+RULES_VERSION_KEY: str = "rules_version"
+
 
 class VerificationResult(str, Enum):
     """The two outcomes a VERIFICATION ledger entry's result can carry.
@@ -89,8 +97,9 @@ class LedgerEntry:
     """One entry in the hash chain.
 
     `identity_key`/`cluster_key` are plain strings, not vsl_core.identity
-    objects -- this is deliberate: it keeps the Ledger's only dependency at
-    exceptions.py, so the Ledger subtree can be vendored or reused on its
+    objects -- this is deliberate: it keeps the Ledger's only dependencies at
+    exceptions.py and the import-free rules_version.py constant, so the
+    Ledger subtree can be vendored or reused on its
     own without pulling in the rest of the package's object graph. This is
     the structural fix for the exact "importing the Ledger drags in
     unrelated dependencies" problem this package exists to solve.
@@ -588,6 +597,104 @@ class VerbaLedger:
         payload = {**(extra_payload or {}), VERIFICATION_RESULT_KEY: result.value}
         return self.write(
             LedgerEntryType.VERIFICATION,
+            identity_key=identity_key,
+            cluster_key=cluster_key,
+            instance_id=instance_id,
+            decision_id=decision_id,
+            caused_by=caused_by,
+            payload=payload,
+        )
+
+    def write_gate_decision(
+        self,
+        *,
+        identity_key: str,
+        primitive_name: str,
+        allowed: bool | None = None,
+        estimate: Any = None,
+        gamma_threshold: float | None = None,
+        cluster_key: str | None = None,
+        instance_id: str | None = None,
+        decision_id: str | None = None,
+        caused_by: str | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> LedgerEntry:
+        """Write one gate's allow/deny decision as a MONITOR entry in the
+        standard gate-decision shape, so every agent records gates the same
+        way.
+
+        `primitive_name` is the gate's declared PreNode/Invariant `name`,
+        which is what links the runtime record to the gate in the code.
+        Pass `decision_id` so a decision's gate checks and its outcome can
+        be read back together.
+
+        For a PreNode, pass the monitor's GammaEstimate as `estimate` and the
+        PreNode's `gamma_threshold`: `allowed` is then computed with
+        estimate.sufficient(gamma_threshold), the same check the compiled
+        gate makes, and the record carries gamma_hat, delta_estimation_error,
+        robust_gamma, gamma_threshold and required_gamma_hat. An explicit
+        `allowed` that disagrees raises ValueError rather than recording a
+        contradiction. For an Invariant (no Gamma), pass `allowed` alone.
+
+        Every record carries `rules_version` (ASSURANCE_RULES_VERSION) and
+        `drift_detected = not allowed`. A denied gate is drift as far as
+        audit() is concerned: follow it with the decision's VERIFICATION or
+        TERMINAL entry, as for any MONITOR entry that flags drift.
+
+        `estimate` is read by duck typing (gamma_hat, delta_estimation_error,
+        robust_gamma(), required_gamma_hat(), sufficient()), so this module
+        still never imports vsl_core.metrics. The record's own keys are
+        merged last; extra_payload can never overwrite them.
+        """
+        if not isinstance(primitive_name, str) or not primitive_name.strip():
+            raise ValueError(
+                "write_gate_decision needs the gate's declared name as primitive_name; "
+                "without it the record cannot be linked to its gate."
+            )
+
+        gate_fields: dict[str, Any] = {}
+        if estimate is not None:
+            if gamma_threshold is None:
+                raise ValueError(
+                    "write_gate_decision with an estimate needs the PreNode's gamma_threshold, "
+                    "so the record shows the bar the gate actually applied."
+                )
+            computed = bool(estimate.sufficient(gamma_threshold))
+            if allowed is not None and allowed != computed:
+                raise ValueError(
+                    f"allowed={allowed!r} contradicts estimate.sufficient({gamma_threshold!r}) "
+                    f"= {computed!r}; refusing to record a gate decision that disagrees with "
+                    "the gate's own check."
+                )
+            allowed = computed
+            gate_fields = {
+                "gamma_hat": estimate.gamma_hat,
+                "delta_estimation_error": estimate.delta_estimation_error,
+                "robust_gamma": estimate.robust_gamma(),
+                "gamma_threshold": gamma_threshold,
+                "required_gamma_hat": estimate.required_gamma_hat(gamma_threshold),
+            }
+        elif gamma_threshold is not None:
+            raise ValueError(
+                "gamma_threshold was given without an estimate; pass the monitor's "
+                "GammaEstimate too, or neither for an Invariant."
+            )
+        elif not isinstance(allowed, bool):
+            raise ValueError(
+                "write_gate_decision needs allowed=True/False when no estimate is given "
+                f"(got {allowed!r})."
+            )
+
+        payload = {
+            **(extra_payload or {}),
+            **gate_fields,
+            PRIMITIVE_NAME_KEY: primitive_name,
+            GATE_ALLOWED_KEY: allowed,
+            RULES_VERSION_KEY: ASSURANCE_RULES_VERSION,
+            DRIFT_DETECTED_KEY: not allowed,
+        }
+        return self.write(
+            LedgerEntryType.MONITOR,
             identity_key=identity_key,
             cluster_key=cluster_key,
             instance_id=instance_id,
