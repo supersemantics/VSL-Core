@@ -57,8 +57,10 @@ gate = adapter.compile_pre_node(gate_spec)
 # 3. Call — immediately before the real action
 await gate(candidate_input)  # raises if blocked; the real action only runs after this returns
 
-# 4. Log — your own code, not automatic
-ledger.write_monitor(identity_key=..., drift_detected=...)
+# 4. Log — your own code, not automatic: one standard record per gate decision
+ledger.write_gate_decision(identity_key=..., primitive_name=gate_spec.name,
+                           estimate=estimate, gamma_threshold=gate_spec.gamma_threshold,
+                           decision_id=...)  # from inside the monitor; see the README
 
 # 5. Escalate — only on the exception path, only if you catch it
 except InvariantViolation:
@@ -104,7 +106,7 @@ Prompt: *"Build me a deterministic agent for a customer support bot that can loo
 **Build it:**
 - `domain.py`: `Customer`, `Order`, `RefundRequest`.
 - `tools.py`: `lookup_order(order_id)`, `issue_refund(order, amount)`, `send_email(customer, subject, body)`.
-- `governance.py`: an `Invariant` named `refund_within_policy` (pattern B's shape) and a `PreNode` named `email_content_gate` (pattern A's shape), each with a real `AssuranceBasis` — both checks run before the actual `tools.py` call fires (F1=True), and both directly determine whether the call happens at all (F2=FULL), so both are justified as HIGH.
+- `governance.py`: an `Invariant` named `refund_within_policy` (pattern B's shape) and a `PreNode` named `email_content_gate` (pattern A's shape), each with a real `AssuranceBasis` — both checks run before the actual `tools.py` call fires (F1=True). Both only allow or block, and no model is involved at the guarded call, so both are F2=`NONE`, which derives LOW. Deciding whether an action happens at all is F1, not F2; the LOW describes influence on a model, not how well the gates enforce. Had `send_email`'s body been drafted by a hosted model with the application's own system prompt, the email gate would be F2=`PARTIAL` (MEDIUM).
 - `agent.py`: compiles both via `PlainPythonReferenceAdapter`, calls `email_content_gate` before every `send_email`, calls `refund_within_policy` before every `issue_refund`, catches `InvariantViolation` from the refund check and routes to a `governance_halt` `TerminalState`, writes `MONITOR`/`PRE_NODE`/`VERIFICATION` entries to a `VerbaLedger` around each gated call.
 - `tests/`: one test proving `refund_within_policy` blocks an out-of-policy refund, one proving it passes a valid one, same pair for the email gate.
 
@@ -136,10 +138,13 @@ _email_recipient_invariant = Invariant(
     name="email-recipient-user-specified",
     description="send_refund_email's recipient must appear in text the human actually typed -- non-bypassable.",
     rule=_recipient_was_user_specified,
-    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL),
+    # Only allows or blocks the send; no model is shaped at the guarded call.
+    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
 )
 _email_recipient_gate = LangGraphAdapter().compile_invariant(_email_recipient_invariant)
 ```
+
+(The retrofit as first published declared `F2Modification.FULL` here. That overclaims: the rule decides whether the send happens, which is F1, and changes nothing about what the model produces. It is corrected to `NONE` above.)
 
 Called directly inside the existing dispatcher — no per-tool node to wrap:
 

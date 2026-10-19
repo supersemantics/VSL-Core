@@ -2,6 +2,24 @@
 
 What changed in each release, and why. Newest first.
 
+## Unreleased — documentation only
+
+No code behaviour changes, and the assurance rules version stays `2026.10`: `derived_level` and `sufficient()` are untouched.
+
+### Corrected: how F2 is explained
+
+F2 is judged at the call the gate guards — what the application does to the model there — and is never earned by the gate itself. A gate that only allows or blocks, with nothing shaped at the guarded call, is `NONE`; the application's own system prompt, RAG context or input redaction makes it `PARTIAL`; `FULL` needs a model whose internals the application controls.
+
+**Why.** Several examples labelled gates `F2Modification.FULL` (and so `HIGH`) because they "directly determine whether the call happens" — the worked example and retrofit case study in `docs/building-with-vsl-core.md`, examples A and B in `docs/governance-frameworks.md`, and canonical patterns A and B in `docs/vsl-core-primitives.json`. Deciding whether an action happens is F1, not F2, so those gates are `NONE` (`LOW`). Because the primitives file and the building guide are meant to be handed to AI coding assistants, the overclaim would have been copied into new agents. The README and docstrings also said a gate before a hosted model API is `PARTIAL` because the gate "can only rewrite the prompt"; the `PARTIAL` comes from the prompt the application sends, not from the gate.
+
+### Added: level versus enforcement
+
+The README, `AssuranceLevel` and `AssuranceBasis` now state that the level measures influence on the model only. A gate with F1=True and F2=`NONE` derives `LOW` and still blocks every action it denies; report enforcement (F1) separately rather than raising F2.
+
+### Added: what a Gamma value means today
+
+README and the `GammaEstimate` docstring: monitors return a gate score in Gamma units; build it as a ratio where 1.0 means break-even, fail closed with 0.0, never use a raw 0–1 confidence, label fixed 2.0/0.0 returns as pass/fail encodings, use an `Invariant` for absolute rules, and record decisions with `write_gate_decision()`. Two matching common mistakes added to `vsl-core-primitives.json`.
+
 ## 0.2.0 — assurance rules version 2026.10
 
 ### Changed: how a Gamma threshold is applied (behaviour change only when `delta_estimation_error` > 0)

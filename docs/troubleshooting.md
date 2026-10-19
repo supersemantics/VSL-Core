@@ -40,9 +40,11 @@ FrozenInstanceError: cannot assign to field 'assurance_level'
 
 **Symptom:** `AssuranceBasis.derived_level` returns `MEDIUM` even though you believe the mechanism deserves `HIGH`.
 
-**Cause:** this is the F1/F2 table working as designed, not a bug — `F1=True` + `F2Modification.PARTIAL` is structurally capped at `MEDIUM`. The canonical case: a `PreNode` blocking a call to a hosted LLM API satisfies F1 (it runs before the call), but can only touch the prompt or sampling parameters, never logits or weights behind the API — that's `PARTIAL`, not `FULL`, no matter how confident you are in the check.
+**Cause:** this is the F1/F2 table working as designed, not a bug — `F1=True` + `F2Modification.PARTIAL` is structurally capped at `MEDIUM`. The canonical case: a gate before a hosted LLM call satisfies F1 (it runs before the call), and the application's own system prompt or context makes it `PARTIAL`. Nothing behind the API can be touched, so it is never `FULL`, no matter how confident you are in the check.
 
-**Fix:** if the mechanism genuinely only touches a prompt/parameter, its ceiling is `MEDIUM` — that's accurate, not a shortfall to work around. `HIGH` requires the intervention to actually modify the mechanism producing the output (`F2Modification.FULL`): logit adjustment, activation steering, fine-tuning, constitutional training.
+**Fix:** if the application only shapes the prompt or context at the guarded call, its ceiling is `MEDIUM` — that's accurate, not a shortfall to work around. `HIGH` requires the application to actually modify the mechanism producing the output (`F2Modification.FULL`): logit adjustment, activation steering, fine-tuning, constitutional training — which needs a model whose internals you control.
+
+**The opposite mistake is more common:** declaring `FULL` because "the gate decides whether the action happens at all". Deciding whether an action happens is F1, not F2. A gate that only allows or blocks, where the application shapes nothing at the guarded call (a refund cap, an email allow-list), is `F2Modification.NONE`, which derives `LOW`. That `LOW` describes influence on the model, not enforcement: the gate still blocks every action it denies.
 
 **Reproduced:**
 ```python
