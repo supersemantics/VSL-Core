@@ -30,10 +30,16 @@ class AssuranceLevel(str, Enum):
     """HIGH / MEDIUM / LOW confidence rating per the F1/F2 test.
 
     A mechanism satisfying F1 (pre-commitment) but only partial F2 (energy-
-    landscape modification) -- e.g. a system prompt or blocking guardrail
-    against a hosted model API -- caps at MEDIUM, never HIGH. This
-    distinction must never be blurred by any code or docs built on top of
-    this package.
+    landscape modification) -- e.g. a gate in front of a hosted model API
+    call whose prompt the application writes -- caps at MEDIUM, never HIGH.
+    This distinction must never be blurred by any code or docs built on top
+    of this package.
+
+    The level measures one thing: how deeply governance shapes what the
+    model produces. Whether a gate blocks the action before it happens is
+    F1, and is best reported on its own rather than read off the level --
+    a gate with F1=True and F2=NONE is LOW here, yet it still stops every
+    action it denies.
 
     Prefer constructing this via AssuranceBasis.derived_level rather than
     setting it directly -- see AssuranceBasis below.
@@ -48,13 +54,24 @@ class F2Modification(str, Enum):
     """How fully an intervention modifies the energy function E_gov(x) =
     E_0(x) + U(x), per the source spec's F2 test.
 
+    F2 is judged at the call the gate guards: what does the application do
+    to the model there? It is never earned by the gate itself -- allowing or
+    blocking an action changes nothing about what a model produces.
+
     FULL: directly modifies the energy function (logit adjustment,
-    activation steering, fine-tuning, constitutional training).
+    activation steering, fine-tuning, constitutional training). Needs a
+    model whose internals the application controls; a hosted model API
+    rules it out.
     PARTIAL: shapes output through attention/context rather than direct
-    energy modification (system prompts, RAG context injection).
+    energy modification -- the application changes what the model sees
+    (its own system prompt, RAG context injection, redacting the input).
     INDIRECT: affects sampling without touching the energy function itself
     (temperature adjustment).
-    NONE: no claimed effect on the energy function at all.
+    NONE: the gate only allows or blocks, and the application shapes
+    nothing at the guarded call -- or no model is involved at all (an
+    amount cap before issue_refund, an allow-list before send_email).
+
+    When unsure, pick the lowest value the code honestly supports.
     """
 
     FULL = "FULL"
@@ -88,6 +105,8 @@ class AssuranceBasis:
     extension, not a spec fact: a check that runs early but does nothing to
     the distribution isn't governance in the Gamma-sufficiency sense, so it
     is treated the same as output-layer (LOW) rather than left undefined.
+    LOW here describes influence on the model, not enforcement: such a gate
+    still blocks every action it denies (that is its F1).
 
     __post_init__ requires f1_pre_commitment to actually be a bool and
     f2_modification to actually be an F2Modification member. Before these
@@ -159,6 +178,18 @@ class GammaEstimate:
        claim ("this gamma_hat is exact"), not a neutral/safe absence of
        information; set it deliberately when the estimation method is
        noisier than that.
+
+    What gamma_hat is today: vsl-core never measures Gamma; the monitor
+    computes gamma_hat and the gate only compares it. For most actions the
+    spec's Gamma cannot be measured directly, so a monitor returns a gate
+    score in Gamma units. Make it honest: build it as a ratio where 1.0
+    means break-even (a policy limit divided by the requested amount, a
+    judge score divided by its break-even score), return 0.0 when input is
+    missing or unreadable, never pass a raw 0-1 confidence (it can never
+    exceed 1.1), and call a fixed 2.0-or-0.0 value what it is: a pass/fail
+    encoding, not a measurement. For a rule that must never be broken, use
+    an Invariant rather than a large threshold. Record each decision with
+    VerbaLedger.write_gate_decision() if Gamma is to be tracked over time.
     """
 
     gamma_hat: float

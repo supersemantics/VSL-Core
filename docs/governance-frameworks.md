@@ -23,7 +23,7 @@ These are real, tested vsl-core constructs (137 tests passing, `run_conformance_
 | **PreNode** (`constructs.py`) | Gates a single transition behind a `monitor` callback that returns a `GammaEstimate`, checked against a `gamma_threshold`, with a `Fallback` (retry, then escalate) on insufficiency. The action cannot proceed without the gate returning normally. |
 | **Invariant** (`constructs.py`) | An always-on hard constraint, independent of `PreNode`. Raises `InvariantViolation` — not a bare exception — on failure, and can optionally name a `TerminalState` to enter immediately. |
 | **AllowedState / InadmissibleState** (`constructs.py`) | Every outcome resolves to one of these two classifications. `AllowedState` carries an `AssuranceBasis`; `InadmissibleState` carries a `signature` and an optional `energy_gap_proxy` instead — nothing executes unclassified. |
-| **AssuranceBasis** (`metrics.py`) | A derived, read-only grade (HIGH/MEDIUM/LOW) computed from two facts you supply: was this checked *before* commitment (F1), and how completely does the check modify the outcome (F2: FULL/PARTIAL/INDIRECT/NONE). You can't just assert HIGH — you have to state what makes it HIGH, and the grade is recomputed from those facts every time. |
+| **AssuranceBasis** (`metrics.py`) | A derived, read-only grade (HIGH/MEDIUM/LOW) computed from two facts you supply: was this checked *before* commitment (F1), and how much does the application change what the model produces at the guarded call (F2: FULL/PARTIAL/INDIRECT/NONE). You can't just assert HIGH — you have to state what makes it HIGH, and the grade is recomputed from those facts every time. |
 | **Cluster** (`cluster.py`) | Aggregates constituent systems by `IdentityKey` (not by process `Instance`), with construction-time validation that every declared constituent is actually covered by the cluster's own key. An attempt at "a cluster can't silently omit one of its own members" — not a claim that multi-agent composition risk is solved. |
 | **Identity layer + `request_re_enablement()`** (`identity.py`, `governance.py`) | Scoped agent/instance identity, plus a single named path back into operation after a suspension — one that requires a `GovernanceAuthority`, a named human approver, and structured `Evidence` before it will construct a `HumanAuthorisedTransition`. |
 | **VerbaLedger** (`ledger.py`) | A hash-chained, append-only log with seven entry types and an `audit()` method running five named cross-referencing checks (not just presence checks). A single-byte tamper anywhere in a persisted chain flips `verify_integrity()` from `True` to `False` — confirmed live, not just claimed. `current_checkpoint()` exposes the chain's current tip for external witnessing (Artifact 6) — it does no anchoring or signing itself. |
@@ -46,13 +46,14 @@ ALLOWED_TOOLS = {"lookup_order", "issue_refund_under_50"}
 
 async def within_declared_scope(candidate_action) -> GammaEstimate:
     ok = candidate_action.tool_name in ALLOWED_TOOLS
-    return GammaEstimate(gamma_hat=2.0 if ok else 0.1)
+    return GammaEstimate(gamma_hat=2.0 if ok else 0.1)  # pass/fail encoding, not a measured Gamma
 
 tool_call_gate = PreNode(
     name="tool_call_gate",
     description="A tool call only proceeds if it's within this agent's declared scope",
     monitor=within_declared_scope,
-    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL),
+    # Runs before the tool call (F1); only allows or blocks it (F2 NONE).
+    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
     fallback=Fallback(max_retries=1, on_max_retries="AUTOMATION_DENIED"),
 )
 ```
@@ -77,7 +78,8 @@ payment_required = Invariant(
     name="payment_required",
     description="Never confirm a booking without a verified payment method",
     rule=payment_is_verified,
-    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL),
+    # Runs before the booking is confirmed (F1); only allows or blocks it (F2 NONE).
+    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
     on_violation=governance_halt,
 )
 ```

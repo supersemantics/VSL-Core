@@ -278,7 +278,7 @@
       "purpose": "The F1/F2 facts an AssuranceLevel is derived from. Required on PreNode/Invariant/AllowedState -- assurance_level can never be set directly.",
       "fields": [
         {"name": "f1_pre_commitment", "type": "bool", "required": true, "note": "does the check run before the action commits?"},
-        {"name": "f2_modification", "type": "F2Modification", "required": true, "note": "how completely does the check modify the actual outcome vs. just touching a prompt/sampling parameter?"}
+        {"name": "f2_modification", "type": "F2Modification", "required": true, "note": "judged at the call the gate guards: FULL = the app modifies the model itself (logits/activations/weights; impossible behind a hosted API); PARTIAL = the app shapes what the model sees (its own system prompt, RAG, redaction); INDIRECT = sampling only (temperature); NONE = the gate only allows or blocks and nothing is shaped, or no model is involved. Deciding whether an action happens is F1, never F2."}
       ],
       "derived_properties": [
         {"name": "derived_level", "type": "AssuranceLevel", "table": "F1=False -> LOW (any F2). F1=True + FULL -> HIGH. F1=True + PARTIAL/INDIRECT -> MEDIUM. F1=True + NONE -> LOW."}
@@ -361,12 +361,12 @@
     {
       "id": "A",
       "name": "Gate a high-impact action before it runs",
-      "code": "from vsl_core.constructs import PreNode, Fallback\nfrom vsl_core.metrics import AssuranceBasis, F2Modification, GammaEstimate\n\nALLOWED_TOOLS = {\"lookup_order\", \"issue_refund_under_50\"}\n\nasync def within_declared_scope(candidate_action) -> GammaEstimate:\n    ok = candidate_action.tool_name in ALLOWED_TOOLS\n    return GammaEstimate(gamma_hat=2.0 if ok else 0.1)\n\ntool_call_gate = PreNode(\n    name=\"tool_call_gate\",\n    description=\"A tool call only proceeds if it's within this agent's declared scope\",\n    monitor=within_declared_scope,\n    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL),\n    fallback=Fallback(max_retries=1, on_max_retries=\"AUTOMATION_DENIED\"),\n)"
+      "code": "from vsl_core.constructs import PreNode, Fallback\nfrom vsl_core.metrics import AssuranceBasis, F2Modification, GammaEstimate\n\nALLOWED_TOOLS = {\"lookup_order\", \"issue_refund_under_50\"}\n\nasync def within_declared_scope(candidate_action) -> GammaEstimate:\n    ok = candidate_action.tool_name in ALLOWED_TOOLS\n    return GammaEstimate(gamma_hat=2.0 if ok else 0.1)  # pass/fail encoding, not a measured Gamma\n\ntool_call_gate = PreNode(\n    name=\"tool_call_gate\",\n    description=\"A tool call only proceeds if it's within this agent's declared scope\",\n    monitor=within_declared_scope,\n    # Runs before the tool call (F1); only allows or blocks it (F2 NONE).\n    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),\n    fallback=Fallback(max_retries=1, on_max_retries=\"AUTOMATION_DENIED\"),\n)"
     },
     {
       "id": "B",
       "name": "A hard rule that can't be bypassed, with an escalation path",
-      "code": "from vsl_core.constructs import Invariant, TerminalState\nfrom vsl_core.metrics import AssuranceBasis, F2Modification\n\ngovernance_halt = TerminalState(\n    name=\"governance_halt\",\n    description=\"Halts pending human review after a hard rule is violated\",\n    entry_conditions=(\"invariant_violated\",),\n)\n\nasync def payment_is_verified(candidate) -> bool:\n    return candidate.customer.payment_verified is True\n\npayment_required = Invariant(\n    name=\"payment_required\",\n    description=\"Never confirm a booking without a verified payment method\",\n    rule=payment_is_verified,\n    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL),\n    on_violation=governance_halt,\n)"
+      "code": "from vsl_core.constructs import Invariant, TerminalState\nfrom vsl_core.metrics import AssuranceBasis, F2Modification\n\ngovernance_halt = TerminalState(\n    name=\"governance_halt\",\n    description=\"Halts pending human review after a hard rule is violated\",\n    entry_conditions=(\"invariant_violated\",),\n)\n\nasync def payment_is_verified(candidate) -> bool:\n    return candidate.customer.payment_verified is True\n\npayment_required = Invariant(\n    name=\"payment_required\",\n    description=\"Never confirm a booking without a verified payment method\",\n    rule=payment_is_verified,\n    # Runs before the booking is confirmed (F1); only allows or blocks it (F2 NONE).\n    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),\n    on_violation=governance_halt,\n)"
     },
     {
       "id": "C",
@@ -441,6 +441,8 @@
     "Calling Instance._re_enable() directly instead of governance.request_re_enablement() -- bypasses the authority/evidence audit trail.",
     "Distinguishing a plain InvariantViolation from one that also entered a TerminalState by parsing the reason string instead of checking the exception's terminal_state_name field directly.",
     "Describing VerbaLedger's hash chain as a cryptographic signature or proof of non-repudiation -- it's tamper-evidence (detects change after the fact), not identity-bound signing.",
-    "Claiming HIGH assurance for a mechanism that only touches a prompt or sampling parameter behind a hosted API -- that caps at MEDIUM (F1=True, F2=PARTIAL)."
+    "Claiming HIGH assurance for a gate in front of a hosted API -- the app can only shape the prompt/context there, which caps at MEDIUM (F1=True, F2=PARTIAL).",
+    "Declaring F2=FULL because the gate decides whether the action happens -- that is F1. A gate that only allows or blocks, with nothing shaped at the guarded call, is F2=NONE (LOW). LOW describes influence on the model, not enforcement.",
+    "Using a raw 0-1 confidence as gamma_hat -- it can never exceed the 1.1 threshold, so the gate denies every time. Build gamma_hat as a ratio where 1.0 means break-even."
   ]
 }

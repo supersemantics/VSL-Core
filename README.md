@@ -38,19 +38,34 @@ If you're asking "how does this relate to the OWASP Agentic Top 10, NIST's AI RM
 Every claim this package (or anything built on it) makes about how trustworthy a governance mechanism is reduces to one test:
 
 - **F1 (pre-commitment)** — does the check run *before* the system commits to an action, with no side effect yet fired?
-- **F2 (energy-landscape modification)** — does the intervention actually touch the mechanism that produces the output (logits, weights, activations), or does it only touch the prompt or sampling parameters?
+- **F2 (energy-landscape modification)** — how much does the system change what the model produces? It is judged at the call the gate guards: does the application touch the mechanism that produces the output (logits, weights, activations), only what the model sees (prompt, context) or how it samples, or nothing at all?
 
-A mechanism satisfying F1 but only *partial* F2 caps at **MEDIUM** assurance, never HIGH. Concretely: a `PreNode` blocking a call to a hosted LLM API satisfies F1 (it runs before the call), but can only rewrite the prompt or adjust sampling parameters — it cannot touch logits or weights behind an API. That caps it at MEDIUM. Nothing in this package, in any README, or in any client-facing material built on it should blur this distinction.
+F2 is never earned by the gate itself. Allowing or blocking an action changes nothing about what a model produces, so a gate that only allows or blocks — and an application that shapes nothing at the guarded call — is `NONE`.
+
+| Gate pattern | F1 | F2 | Level |
+|---|---|---|---|
+| Amount cap before `issue_refund` (no model involved) | True | `NONE` | LOW |
+| Gate before a hosted-model call whose system prompt the application writes | True | `PARTIAL` | MEDIUM |
+| Gate before a self-hosted model call where the application steers logits or activations (`PreNode.intervention`) | True | `FULL` | HIGH |
+| A check that runs after the action has already happened, or only logs | False | any | LOW |
+
+A mechanism satisfying F1 but only *partial* F2 caps at **MEDIUM** assurance, never HIGH. A hosted model API rules out `FULL`: nobody outside the provider can touch its logits or weights, so a gate in front of one is at most `PARTIAL`, and only because of the prompt or context the application itself sends. Nothing in this package, in any README, or in any client-facing material built on it should blur this distinction.
+
+**The level measures influence on the model, not enforcement.** A gate with F1=True and F2=`NONE` derives `LOW`, yet it still blocks every action it denies — that is its F1. Report the two separately ("blocks before the action: yes; shapes the model: no") rather than reading enforcement off the level, and never raise F2 to make a level look better.
 
 **Stating a basis is structurally enforced; the basis being true is not.** `AllowedState.assurance_level`/`PreNode.assurance_level`/`Invariant.assurance_level` are *derived*, read-only properties — you can't set them directly, and you can't skip past `AssuranceBasis` to assert a level for free. What you provide instead is an `AssuranceBasis`: the F1 (bool) and F2 (`F2Modification`: `FULL`/`PARTIAL`/`INDIRECT`/`NONE`) facts themselves. `AssuranceBasis.derived_level` computes the level from those facts, so a `PreNode` claiming HIGH has to actually state "yes F1, and F2 is FULL" — it can't just default into HIGH. `AssuranceBasis.__post_init__` also rejects any `f1_pre_commitment` that isn't a strict `bool` and any `f2_modification` that isn't a real `F2Modification` member — `f1_pre_commitment=None`, `f2_modification=None`, a typo, or any other invalid value raises `TypeError` immediately, rather than silently deriving `LOW` by falling through `derived_level` unnoticed (`f1_pre_commitment=None` is falsy, so without this check it would quietly take the `not self.f1_pre_commitment` branch straight to `LOW`). This closes one specific failure mode — a value nobody actually chose being computed anyway — not the other one described below.
 
 ```python
 from vsl_core.metrics import AssuranceBasis, F2Modification
 
-# A hosted-LLM-API guardrail: runs before the call (F1=True), but can only
-# touch the prompt, not logits/weights behind the API (F2=PARTIAL).
+# A gate before a hosted-LLM call: runs before the call (F1=True); the app
+# sends its own system prompt there, so F2=PARTIAL. Nothing behind the API
+# can be touched, so FULL is impossible.
 basis = AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.PARTIAL)
 basis.derived_level  # AssuranceLevel.MEDIUM -- not HIGH, even if you wanted it to be
+
+# An amount cap before issue_refund: no model at the guarded call, so F2=NONE.
+AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE).derived_level  # LOW
 ```
 
 **But stating F1/F2 is not the same as proving them.** `AssuranceBasis` is a self-declared claim, not independently verified assurance. Nothing in this package checks that a stated `F2Modification.FULL` actually reflects what the gated `monitor`/`rule` does — a developer can construct a perfectly valid `AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL)` next to a callable that only calls a hosted, black-box LLM API, and `vsl-core` will compute `HIGH` from it without objection. Confirming a stated F2 value is honest requires something external to this package — a human reviewing the actual `monitor`/`rule` code, or a dedicated tool built for that reconciliation. Presenting a derived `AssuranceLevel` to a compliance team, an auditor, or a client as though it were independently confirmed is not something this package does, checks, or claims: treat it as what a developer asserted, not what was proven.
@@ -138,6 +153,15 @@ If you never call `ledger.write*` anywhere in your agent, you get real, working 
 **Threshold note**: only Gamma's default threshold (1.1) was previously represented anywhere in this package. The spec also names a Jacobian "red flag" (`lambda_min(J_gov) < 0.05`) and a default KL monitoring threshold (0.15 nats) — both are now reference constants too, so a `DriftMonitor` implementer has the spec's own defaults available instead of re-deriving or mistyping them. Jacobian/KL computation itself stays out of core, same as Gamma estimation — these are just named numbers.
 
 **How a threshold is applied.** A Gamma threshold is 1 plus the estimation-error allowance it already includes (1.1 = 10%, 1.2 = 20%). `GammaEstimate.sufficient(threshold)` passes only when `gamma_hat` is strictly greater than `max(threshold, 1 + delta_estimation_error)`, which `required_gamma_hat(threshold)` returns: a monitor's declared error raises the bar only when it is larger than the allowance already in the threshold. Every pass therefore also means `robust_gamma() > 1`. Exactly on the bar does not pass. See [CHANGELOG.md](CHANGELOG.md) for the change from rules version 2026.10.
+
+**What a Gamma value means today.** vsl-core never measures Gamma: your monitor computes `gamma_hat`, and the gate only compares it. For most actions (a refund, an email) the spec's Gamma cannot be measured directly, so what a monitor returns is a *gate score in Gamma units*. Make it an honest one:
+
+- Build it as a ratio where 1.0 means break-even: a policy limit divided by the requested amount, a judge's score divided by its break-even score, an hourly cap divided by this send's count.
+- Return `0.0` when the input is missing or unreadable, so the gate fails closed.
+- Never use a raw 0–1 confidence as `gamma_hat`: it can never exceed 1.1, so the gate denies every time.
+- A fixed `2.0`-or-`0.0` return is a pass/fail encoding, not a measurement. Say so in a comment; for a rule that must never be broken, use an `Invariant` instead of a large threshold.
+- Use `ROBUST_GAMMA_HIGH_STAKES_THRESHOLD` (1.2) for payments, medical and legal actions; never set a threshold at or below 1.0.
+- Record each decision with `write_gate_decision()` (see "The ledger doesn't write itself" above) if you want to track how a gate's scores move over time. vsl-core keeps no history of its own.
 
 ### Drift has no dedicated type, by design
 
