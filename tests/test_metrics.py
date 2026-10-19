@@ -27,13 +27,42 @@ def test_robust_gamma_formula():
     assert math.isclose(estimate.robust_gamma(), 1.2 * (1 / 1.1))
 
 
-def test_sufficient_uses_robust_gamma_not_raw_gamma_hat():
-    # gamma_hat=1.15 with 10% error -> robust gamma = 1.15/1.1 = 1.0454..., below 1.1 threshold
+def test_delta_within_the_threshold_allowance_does_not_raise_the_bar():
+    # 1.1 already includes a 10% allowance; delta=0.1 must not count it twice.
+    # (Before rules version 2026.10 this was denied: 1.15 / 1.1 = 1.045 < 1.1.)
     estimate = GammaEstimate(gamma_hat=1.15, delta_estimation_error=0.1)
-    assert not estimate.sufficient(ROBUST_GAMMA_DEFAULT_THRESHOLD)
-    # gamma_hat=1.3 with 10% error -> robust gamma = 1.1818, above 1.1 threshold
-    estimate2 = GammaEstimate(gamma_hat=1.3, delta_estimation_error=0.1)
-    assert estimate2.sufficient(ROBUST_GAMMA_DEFAULT_THRESHOLD)
+    assert estimate.required_gamma_hat(ROBUST_GAMMA_DEFAULT_THRESHOLD) == ROBUST_GAMMA_DEFAULT_THRESHOLD
+    assert estimate.sufficient(ROBUST_GAMMA_DEFAULT_THRESHOLD)
+
+
+def test_delta_above_the_threshold_allowance_raises_the_bar():
+    # delta=0.2 against 1.1: the bar becomes 1 + 0.2 = 1.2.
+    assert math.isclose(GammaEstimate(gamma_hat=1.0, delta_estimation_error=0.2).required_gamma_hat(1.1), 1.2)
+    assert not GammaEstimate(gamma_hat=1.15, delta_estimation_error=0.2).sufficient(1.1)
+    assert GammaEstimate(gamma_hat=1.25, delta_estimation_error=0.2).sufficient(1.1)
+
+
+@pytest.mark.parametrize(
+    "gamma_hat, threshold, expected",
+    [
+        (1.30, ROBUST_GAMMA_DEFAULT_THRESHOLD, True),  # well inside policy
+        (1.05, ROBUST_GAMMA_DEFAULT_THRESHOLD, False),  # above 1, within the margin
+        (0.95, ROBUST_GAMMA_DEFAULT_THRESHOLD, False),  # drift winning
+        (1.10, ROBUST_GAMMA_DEFAULT_THRESHOLD, False),  # exactly on the bar: strict >
+        (1.15, ROBUST_GAMMA_HIGH_STAKES_THRESHOLD, False),  # high stakes
+        (1.25, ROBUST_GAMMA_HIGH_STAKES_THRESHOLD, True),
+    ],
+)
+def test_zero_delta_behaviour_is_unchanged(gamma_hat, threshold, expected):
+    assert GammaEstimate(gamma_hat=gamma_hat).sufficient(threshold) is expected
+
+
+@pytest.mark.parametrize("delta", [0.0, 0.05, 0.1, 0.15, 0.2, 0.5])
+@pytest.mark.parametrize("gamma_hat", [0.9, 1.0, 1.05, 1.1, 1.11, 1.2, 1.21, 1.6])
+def test_a_pass_always_means_robust_gamma_above_one(gamma_hat, delta):
+    estimate = GammaEstimate(gamma_hat=gamma_hat, delta_estimation_error=delta)
+    if estimate.sufficient(ROBUST_GAMMA_DEFAULT_THRESHOLD):
+        assert estimate.robust_gamma() > 1.0
 
 
 def test_sufficient_default_threshold_is_robust_default():

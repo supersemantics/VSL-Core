@@ -73,6 +73,34 @@ else:
     ledger.write_monitor(identity_key=..., drift_detected=False)
 ```
 
+To record a gate's own decision, use `write_gate_decision()`. It writes one standard record, so every agent's gate decisions can be read the same way:
+
+```python
+REFUND_GATE = "refund-within-policy"
+
+async def refund_headroom(request) -> GammaEstimate:
+    estimate = GammaEstimate(gamma_hat=REFUND_LIMIT / request["amount"])
+    ledger.write_gate_decision(
+        identity_key="refund-agent",
+        primitive_name=REFUND_GATE,                     # must equal the PreNode's name
+        estimate=estimate,
+        gamma_threshold=ROBUST_GAMMA_DEFAULT_THRESHOLD,  # must equal the PreNode's threshold
+        decision_id=request["decision_id"],             # groups this decision's entries
+    )
+    return estimate
+
+refund_pre_node = PreNode(
+    name=REFUND_GATE,
+    description="Refunds must stay comfortably inside the policy limit.",
+    monitor=refund_headroom,
+    gamma_threshold=ROBUST_GAMMA_DEFAULT_THRESHOLD,
+    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
+)
+# For an Invariant, record inside its rule: write_gate_decision(..., allowed=holds).
+```
+
+The record is a `MONITOR` entry carrying `primitive_name`, `allowed` (computed with the same `sufficient()` check the gate makes), `gamma_hat`, `delta_estimation_error`, `robust_gamma`, `gamma_threshold`, `required_gamma_hat`, `rules_version` and `drift_detected` (`not allowed`). `rules_version` is `ASSURANCE_RULES_VERSION`: if a later release changes how Gamma or assurance levels are judged, every record still says which rules produced it.
+
 If you never call `ledger.write*` anywhere in your agent, you get real, working governance gates and zero audit trail — `vsl-core` will not warn you this happened, because from its point of view nothing went wrong: the gates it owns did exactly what they were compiled to do. An empty or missing `VerbaLedger` is indistinguishable, from inside this package, from an agent that has never once been gated. See [`docs/building-with-vsl-core.md`](docs/building-with-vsl-core.md)'s "know what's automatic and what you write yourself" for the full breakdown of which of the five steps (construct, compile, call, log, escalate) are automatic and which are entirely on you.
 
 ## VSL construct → vsl_core object
@@ -108,6 +136,8 @@ If you never call `ledger.write*` anywhere in your agent, you get real, working 
 **Beta note**: the source spec describes Beta only qualitatively (higher Beta → lower volatility → stronger concentration on energy minima; systems tuned at normal Beta may fail at crisis Beta) — it gives no closed-form formula relating Beta to Delta or Gamma. `Beta` is a bare value holder for exactly this reason: naming and logging the quantity without fabricating a computation the source paper doesn't provide.
 
 **Threshold note**: only Gamma's default threshold (1.1) was previously represented anywhere in this package. The spec also names a Jacobian "red flag" (`lambda_min(J_gov) < 0.05`) and a default KL monitoring threshold (0.15 nats) — both are now reference constants too, so a `DriftMonitor` implementer has the spec's own defaults available instead of re-deriving or mistyping them. Jacobian/KL computation itself stays out of core, same as Gamma estimation — these are just named numbers.
+
+**How a threshold is applied.** A Gamma threshold is 1 plus the estimation-error allowance it already includes (1.1 = 10%, 1.2 = 20%). `GammaEstimate.sufficient(threshold)` passes only when `gamma_hat` is strictly greater than `max(threshold, 1 + delta_estimation_error)`, which `required_gamma_hat(threshold)` returns: a monitor's declared error raises the bar only when it is larger than the allowance already in the threshold. Every pass therefore also means `robust_gamma() > 1`. Exactly on the bar does not pass. See [CHANGELOG.md](CHANGELOG.md) for the change from rules version 2026.10.
 
 ### Drift has no dedicated type, by design
 
@@ -222,9 +252,11 @@ Not yet published to PyPI. The reserved distribution name is `super-semantics-vs
 ```
 src/vsl_core/
 ├── exceptions.py       exception hierarchy
+├── rules_version.py    ASSURANCE_RULES_VERSION (written into every gate-decision record)
 ├── metrics.py          Delta, Gamma, GES, EEF, Beta, Threshold, AssuranceBasis
 ├── identity.py         IdentityKey, ClusterKey, Instance, Evidence
-├── ledger.py           VerbaLedger, hash-chained LedgerEntry, causal audit checks, checkpoints
+├── ledger.py           VerbaLedger, hash-chained LedgerEntry, gate-decision records, causal audit checks, checkpoints
+├── immudb_store.py     optional ImmuDBLedgerStore (JSONL plus verified immudb replication)
 ├── constructs.py       AllowedState, PreNode, Invariant, TerminalState
 ├── cluster.py          Cluster, ClusterPreNode
 ├── governance.py       GovernanceAuthority, HumanAuthorisedTransition, Proofing, Binding, Specification

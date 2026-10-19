@@ -258,6 +258,7 @@
         {"name": "write(entry_type, *, identity_key, cluster_key=None, instance_id=None, decision_id=None, caused_by=None, payload=None)", "returns": "LedgerEntry"},
         {"name": "write_monitor(*, identity_key, drift_detected, cluster_key=None, instance_id=None, decision_id=None, caused_by=None, extra_payload=None)", "returns": "LedgerEntry"},
         {"name": "write_verification(*, identity_key, result: VerificationResult, cluster_key=None, instance_id=None, decision_id=None, caused_by=None, extra_payload=None)", "returns": "LedgerEntry"},
+        {"name": "write_gate_decision(*, identity_key, primitive_name, allowed=None, estimate=None, gamma_threshold=None, cluster_key=None, instance_id=None, decision_id=None, caused_by=None, extra_payload=None)", "returns": "LedgerEntry", "note": "standard MONITOR record of one gate decision: primitive_name, allowed, rules_version, drift_detected, plus gamma_hat/delta_estimation_error/robust_gamma/gamma_threshold/required_gamma_hat for a PreNode"},
         {"name": "verify_integrity()", "returns": "bool", "note": "never raises -- recomputes every entry's hash and chain pointer"},
         {"name": "audit(*, max_monitor_gap_seconds=None)", "returns": "LedgerAuditReport", "note": "5 named checks; checks 2-5 match causally via caused_by when set, else fall back to identity/instance/timestamp heuristic"},
         {"name": "issue_certificate(*, max_monitor_gap_seconds=None)", "returns": "VerbaCertificate | None", "note": "returns None if any audit check fails -- never fabricates"},
@@ -298,8 +299,9 @@
         {"name": "measured_at", "type": "float", "auto_generated": true}
       ],
       "methods": [
-        {"name": "robust_gamma()", "returns": "float"},
-        {"name": "sufficient(threshold=1.1)", "returns": "bool", "note": "this is what a compiled PreNode gate actually checks"}
+        {"name": "robust_gamma()", "returns": "float", "note": "gamma_hat / (1 + delta_estimation_error)"},
+        {"name": "required_gamma_hat(threshold=1.1)", "returns": "float", "note": "max(threshold, 1 + delta_estimation_error): the value gamma_hat must strictly exceed"},
+        {"name": "sufficient(threshold=1.1)", "returns": "bool", "note": "gamma_hat > required_gamma_hat(threshold); this is what a compiled PreNode gate actually checks"}
       ]
     },
     {
