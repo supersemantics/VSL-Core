@@ -355,6 +355,34 @@ class InMemoryLedgerStore:
             return self._entries[-1] if self._entries else None
 
 
+# How much of a JSONL ledger's end last_entry() reads at a time while
+# looking for the last line.
+_TAIL_CHUNK_BYTES = 64 * 1024
+
+
+def _last_nonblank_line(path: Path) -> str | None:
+    """The file's last non-blank line, read backwards from its end, so the
+    cost depends on the line's length, not the file's. Blank means what
+    all_entries() skips: whitespace only. json.dumps escapes every line
+    break inside a value, so a raw \\n or \\r only ever ends a line."""
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        tail = b""
+        while position > 0:
+            step = min(_TAIL_CHUNK_BYTES, position)
+            position -= step
+            handle.seek(position)
+            tail = handle.read(step) + tail
+            content = tail.rstrip()
+            if not content:
+                continue
+            start = max(content.rfind(b"\n"), content.rfind(b"\r")) + 1
+            if start > 0 or position == 0:
+                return content[start:].decode("utf-8").strip()
+    return None
+
+
 class JsonlLedgerStore:
     """One JSON object per line, true append-only file writes (`open(...,
     "a")`, never rewrite-in-place). This is what makes tamper detection
@@ -398,10 +426,12 @@ class JsonlLedgerStore:
                 yield entry
 
     def last_entry(self) -> LedgerEntry | None:
-        last: LedgerEntry | None = None
-        for entry in self.all_entries():
-            last = entry
-        return last
+        """Read from the end of the file: every append calls this (and
+        VerbaLedger.write() once more before it), so reading the whole
+        file made each write slower as the ledger grew."""
+        with self._lock:
+            line = _last_nonblank_line(self.path)
+        return None if line is None else LedgerEntry.from_dict(json.loads(line))
 
     def append(self, entry: LedgerEntry) -> LedgerEntry:
         with self._lock, _CrossProcessFileLock(self.path):
