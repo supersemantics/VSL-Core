@@ -724,3 +724,57 @@ def test_jsonl_store_is_safe_under_concurrent_writers_from_separate_instances(tm
     # Sequence numbers must be a contiguous 0..N-1 run with no duplicates or
     # gaps -- exactly what a lost race would corrupt.
     assert sorted(e.sequence for e in entries) == list(range(writes_per_worker * workers))
+
+
+
+# ---- JsonlLedgerStore.last_entry reads from the end of the file ----
+
+
+def _jsonl_with(tmp_path, n):
+    from vsl_core.ledger import JsonlLedgerStore, LedgerEntryType, VerbaLedger
+
+    store = JsonlLedgerStore(tmp_path / "ledger.jsonl")
+    ledger = VerbaLedger(store=store)
+    for i in range(n):
+        ledger.write(LedgerEntryType.MONITOR, identity_key="agent", payload={"i": i, "note": "a\nb\r\u2028c"})
+    return store
+
+
+def test_jsonl_last_entry_is_none_for_an_empty_or_blank_file(tmp_path):
+    from vsl_core.ledger import JsonlLedgerStore
+
+    store = JsonlLedgerStore(tmp_path / "ledger.jsonl")
+    assert store.last_entry() is None
+    store.path.write_text("\n  \n\r\n", encoding="utf-8")
+    assert store.last_entry() is None
+
+
+def test_jsonl_last_entry_matches_reading_every_entry(tmp_path):
+    store = _jsonl_with(tmp_path, 5)
+    assert store.last_entry() == list(store.all_entries())[-1]
+    assert store.last_entry().sequence == 4
+
+
+def test_jsonl_last_entry_ignores_trailing_blank_lines_and_crlf(tmp_path):
+    store = _jsonl_with(tmp_path, 3)
+    expected = list(store.all_entries())[-1]
+    text = store.path.read_text(encoding="utf-8").replace("\n", "\r\n")
+    store.path.write_bytes((text + "\r\n  \n\n").encode("utf-8"))
+    assert store.last_entry() == expected
+
+
+def test_jsonl_last_entry_spans_read_chunks(tmp_path, monkeypatch):
+    from vsl_core import ledger as ledger_module
+
+    store = _jsonl_with(tmp_path, 4)
+    expected = list(store.all_entries())[-1]
+    for chunk in (1, 7, 64):
+        monkeypatch.setattr(ledger_module, "_TAIL_CHUNK_BYTES", chunk)
+        assert store.last_entry() == expected
+
+
+def test_jsonl_appends_continue_the_chain_after_the_fast_tip(tmp_path):
+    from vsl_core.ledger import VerbaLedger
+
+    store = _jsonl_with(tmp_path, 3)
+    assert VerbaLedger(store=store).verify_integrity()
