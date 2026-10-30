@@ -81,6 +81,10 @@ VERIFICATION_RESULT_KEY: str = "result"
 PRIMITIVE_NAME_KEY: str = "primitive_name"
 GATE_ALLOWED_KEY: str = "allowed"
 RULES_VERSION_KEY: str = "rules_version"
+# A handover record's payload key: {"from_identity", "to_identity", "reason"}.
+# Written by write_handover(); readers (ledger-api's handover reports,
+# proofing-api's handover check) look for exactly this key.
+HANDOVER_KEY: str = "handover"
 
 
 class VerificationResult(str, Enum):
@@ -722,6 +726,52 @@ class VerbaLedger:
             GATE_ALLOWED_KEY: allowed,
             RULES_VERSION_KEY: ASSURANCE_RULES_VERSION,
             DRIFT_DETECTED_KEY: not allowed,
+        }
+        return self.write(
+            LedgerEntryType.MONITOR,
+            identity_key=identity_key,
+            cluster_key=cluster_key,
+            instance_id=instance_id,
+            decision_id=decision_id,
+            caused_by=caused_by,
+            payload=payload,
+        )
+
+    def write_handover(
+        self,
+        *,
+        identity_key: str,
+        to_identity_key: str,
+        decision_id: str,
+        reason: str,
+        cluster_key: str | None = None,
+        instance_id: str | None = None,
+        caused_by: str | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> LedgerEntry:
+        """Record that `identity_key` hands part of a decision to another
+        agent, `to_identity_key`, before that agent acts.
+
+        Written as a MONITOR entry (drift_detected False: a handover is not
+        drift) whose payload carries `handover` = {from_identity,
+        to_identity, reason}, under the decision's `decision_id` and, when
+        the agents form a declared Cluster, its `cluster_key`. The receiving
+        agent should pass this entry's `entry_id` as `caused_by` on its own
+        first gate check (write_gate_decision), which is what shows the
+        receiver checked before acting on what it was handed. A decision
+        trace then reads as one causal chain across both agents.
+
+        `decision_id` is required: a handover outside any decision can't be
+        followed to the receiver's check.
+        """
+        if not decision_id:
+            raise ValueError("write_handover needs the decision_id the two agents share.")
+        if not to_identity_key or to_identity_key == identity_key:
+            raise ValueError("write_handover needs a receiving agent different from the sender.")
+        payload = {
+            **(extra_payload or {}),
+            HANDOVER_KEY: {"from_identity": identity_key, "to_identity": to_identity_key, "reason": reason},
+            DRIFT_DETECTED_KEY: False,
         }
         return self.write(
             LedgerEntryType.MONITOR,
