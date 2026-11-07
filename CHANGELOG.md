@@ -8,7 +8,7 @@ What changed in each release, and why. Newest first.
 
 One agent handing part of a decision to another is now recorded. `VerbaLedger.write_handover(identity_key=..., to_identity_key=..., decision_id=..., reason=..., cluster_key=...)` writes a MONITOR entry (`drift_detected` False: a handover is not drift) whose payload carries `handover` = `{from_identity, to_identity, reason}` under the shared `decision_id` and, for a declared Cluster, its `cluster_key`. The receiving agent passes that entry's `entry_id` as `caused_by` on its first `write_gate_decision()`, so the decision trace reads as one causal chain across both agents.
 
-**Why.** Multi-agent failures are interactions: each agent's own gate can pass while the hand-off between them goes unchecked. Before this, a decision shared by two agents showed both agents' records but nothing marked where one handed over to the other, so no one could check that the receiver gated what it was handed. No new entry type and no ledger schema change: ledger-api and every store accept it as is. The assurance rules version stays `2026.10`.
+**Why.** Multi-agent failures are interactions: each agent's own gate can pass while the hand-off between them goes unchecked. Before this, a decision shared by two agents showed both agents' records but nothing marked where one handed over to the other, so no one could check that the receiver gated what it was handed. No new entry type and no ledger schema change: every ledger store accepts it as is. The assurance rules version stays `2026.10`.
 
 ## Unreleased — documentation only
 

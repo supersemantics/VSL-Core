@@ -82,8 +82,8 @@ PRIMITIVE_NAME_KEY: str = "primitive_name"
 GATE_ALLOWED_KEY: str = "allowed"
 RULES_VERSION_KEY: str = "rules_version"
 # A handover record's payload key: {"from_identity", "to_identity", "reason"}.
-# Written by write_handover(); readers (ledger-api's handover reports,
-# proofing-api's handover check) look for exactly this key.
+# Written by write_handover(); anything that reads handovers back from a
+# ledger looks for exactly this key.
 HANDOVER_KEY: str = "handover"
 
 
