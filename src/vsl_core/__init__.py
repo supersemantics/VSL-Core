@@ -45,6 +45,7 @@ from .immudb_store import ImmuDBConfig, ImmuDBLedgerStore, ImmuDBSyncError
 from .ledger import (
     DRIFT_DETECTED_KEY,
     GATE_ALLOWED_KEY,
+    HANDOVER_KEY,
     GENESIS_HASH,
     HUMAN_AUTHORISED_TRANSITION,
     LEDGER_SCHEMA_VERSION,
@@ -82,7 +83,7 @@ from .metrics import (
 )
 from .rules_version import ASSURANCE_RULES_VERSION
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
@@ -133,6 +134,7 @@ __all__ = [
     "VERIFICATION_RESULT_KEY",
     "PRIMITIVE_NAME_KEY",
     "GATE_ALLOWED_KEY",
+    "HANDOVER_KEY",
     "RULES_VERSION_KEY",
     "VerificationResult",
     "LEDGER_SCHEMA_VERSION",

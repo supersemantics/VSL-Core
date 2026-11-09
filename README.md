@@ -116,6 +116,29 @@ refund_pre_node = PreNode(
 
 The record is a `MONITOR` entry carrying `primitive_name`, `allowed` (computed with the same `sufficient()` check the gate makes), `gamma_hat`, `delta_estimation_error`, `robust_gamma`, `gamma_threshold`, `required_gamma_hat`, `rules_version` and `drift_detected` (`not allowed`). `rules_version` is `ASSURANCE_RULES_VERSION`: if a later release changes how Gamma or assurance levels are judged, every record still says which rules produced it.
 
+When one agent hands part of a decision to another before that agent acts, record the hand-off with `write_handover()`, and have the receiver name it as `caused_by` on its first gate decision. Each agent's own gate can pass while the hand-off between them goes unchecked; this makes the decision trace one causal chain across both agents:
+
+```python
+handover = ledger.write_handover(
+    identity_key="intake-agent",
+    to_identity_key="refund-agent",
+    decision_id=request["decision_id"],   # required: the decision both agents share
+    reason="customer asked for a refund",
+    # cluster_key=...                     # when the agents form a declared Cluster
+)
+# ...in the refund agent's monitor:
+ledger.write_gate_decision(
+    identity_key="refund-agent",
+    primitive_name=REFUND_GATE,
+    estimate=estimate,
+    gamma_threshold=ROBUST_GAMMA_DEFAULT_THRESHOLD,
+    decision_id=request["decision_id"],
+    caused_by=handover.entry_id,          # shows the receiver checked what it was handed
+)
+```
+
+The handover is a `MONITOR` entry with `drift_detected` False (a hand-off is not drift) and a `HANDOVER_KEY` (`"handover"`) payload of `{from_identity, to_identity, reason}`. No new entry type, so every ledger store accepts it unchanged.
+
 If you never call `ledger.write*` anywhere in your agent, you get real, working governance gates and zero audit trail — `vsl-core` will not warn you this happened, because from its point of view nothing went wrong: the gates it owns did exactly what they were compiled to do. An empty or missing `VerbaLedger` is indistinguishable, from inside this package, from an agent that has never once been gated. See [`docs/building-with-vsl-core.md`](docs/building-with-vsl-core.md)'s "know what's automatic and what you write yourself" for the full breakdown of which of the five steps (construct, compile, call, log, escalate) are automatic and which are entirely on you.
 
 ## VSL construct → vsl_core object
@@ -217,9 +240,8 @@ Three additions to the ledger, all backward-compatible — existing single-decis
 the same hash-chained entries to local JSONL and immudb, with connection
 settings supplied by the application or environment. See
 [immudb ledger storage](docs/immudb-ledger.md) for setup and recovery.
-A hosted, durable, multi-tenant option also lives in the separate
-[`vsl-core-ledger-client`](https://github.com/supersemantics/VSL-Core-ledger-client)
-package. `VerbaLedger` uses the same interface for every store.
+`VerbaLedger` uses the same `LedgerStore` interface for every store, so
+any other durable store can be plugged in the same way.
 
 ## The Drift Class / Stabilisation Operator catalog (`vsl_core.catalog`)
 
