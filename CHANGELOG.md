@@ -10,6 +10,11 @@ One agent handing part of a decision to another is now recorded. `VerbaLedger.wr
 
 **Why.** Multi-agent failures are interactions: each agent's own gate can pass while the hand-off between them goes unchecked. Before this, a decision shared by two agents showed both agents' records but nothing marked where one handed over to the other, so no one could check that the receiver gated what it was handed. No new entry type and no ledger schema change: every ledger store accepts it as is. The assurance rules version stays `2026.10`.
 
+### Documentation
+
+- The README's "The ledger doesn't write itself" section now shows `write_handover()` with the receiver's `caused_by`, since the README is the practical guide adapters point to.
+- The README no longer links a separate hosted ledger package as a storage option; it says any store implementing `LedgerStore` plugs in the same way.
+
 ## Unreleased — documentation only
 
 No code behaviour changes, and the assurance rules version stays `2026.10`: `derived_level` and `sufficient()` are untouched.
