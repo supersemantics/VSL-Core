@@ -2,6 +2,23 @@
 
 What changed in each release, and why. Newest first.
 
+## 0.3.1 — published on PyPI
+
+The first version on PyPI: `pip install super-semantics-vsl` (imported as `vsl_core`). The code is
+unchanged from 0.3.0.
+
+**Before:** vsl-core was installed from GitHub (`pip install git+https://github.com/supersemantics/VSL-Core.git`),
+and its README said it was not yet on PyPI. Its links to `docs/` were relative, so they would break on
+the PyPI page, which shows the README.
+
+**After:** the README gives `pip install super-semantics-vsl`, its links point to GitHub, and the
+package lists its repository, changelog and issue tracker. A pushed release tag publishes to PyPI from
+GitHub Actions through Trusted Publishing (`.github/workflows/publish.yml`): the tests run, the tag is
+checked against the version, and no token is stored anywhere.
+
+**Why:** an install from a registry, with a version, is what most people expect; and adapters on PyPI
+can't depend on a GitHub URL (PyPI rejects direct-URL dependencies).
+
 ## 0.3.0 — handover records
 
 ### Added: `write_handover()` and `HANDOVER_KEY`

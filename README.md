@@ -25,13 +25,13 @@ If you're building an adapter for a specific framework, see [Building an adapter
 
 ## Getting started (including with an AI coding assistant)
 
-[`docs/building-with-vsl-core.md`](docs/building-with-vsl-core.md) is the guide for going from "I have an agent, or an idea for one" to working code: how to find the decision points that actually need governing, which parts of the flow are automatic versus something you write yourself, and a domain-agnostic project scaffold with a worked example. Its companion, [`docs/vsl-core-primitives.json`](docs/vsl-core-primitives.json), is the same material as exact, structured facts — every class, field, and code sample in it has been executed against the real package. Both are written to be handed directly to an AI coding assistant (Claude Code, Codex, or similar) as reference material — no special setup required, though pointing your own project's `CLAUDE.md`/equivalent at them is what makes an assistant reach for them without being asked each time.
+[`docs/building-with-vsl-core.md`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/building-with-vsl-core.md) is the guide for going from "I have an agent, or an idea for one" to working code: how to find the decision points that actually need governing, which parts of the flow are automatic versus something you write yourself, and a domain-agnostic project scaffold with a worked example. Its companion, [`docs/vsl-core-primitives.json`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/vsl-core-primitives.json), is the same material as exact, structured facts — every class, field, and code sample in it has been executed against the real package. Both are written to be handed directly to an AI coding assistant (Claude Code, Codex, or similar) as reference material — no special setup required, though pointing your own project's `CLAUDE.md`/equivalent at them is what makes an assistant reach for them without being asked each time.
 
-Stuck on a specific error, not just getting started? [`docs/troubleshooting.md`](docs/troubleshooting.md) is the human-readable version of the JSON's `common_mistakes` — real, reproduced errors (not guessed), with the exact exception text and the fix.
+Stuck on a specific error, not just getting started? [`docs/troubleshooting.md`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/troubleshooting.md) is the human-readable version of the JSON's `common_mistakes` — real, reproduced errors (not guessed), with the exact exception text and the fix.
 
 ## How this relates to governance frameworks (OWASP, NIST, EU AI Act, and others)
 
-If you're asking "how does this relate to the OWASP Agentic Top 10, NIST's AI RMF, the EU AI Act, ISO 42001, or similar" — see [`docs/governance-frameworks.md`](docs/governance-frameworks.md). It does not claim vsl-core satisfies, maps to, or complies with any of them. What it does instead: framework by framework, it takes each one's own stated goal in its own words and shows one way a developer might attempt to address it using vsl-core's real primitives — runnable code, actual output, and an honest "we don't attempt this" wherever vsl-core has nothing relevant to offer. Whether a given implementation built this way actually satisfies a given framework, for a real deployment, is a question for a qualified auditor or compliance professional, not something this package or that document can settle in advance.
+If you're asking "how does this relate to the OWASP Agentic Top 10, NIST's AI RMF, the EU AI Act, ISO 42001, or similar" — see [`docs/governance-frameworks.md`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/governance-frameworks.md). It does not claim vsl-core satisfies, maps to, or complies with any of them. What it does instead: framework by framework, it takes each one's own stated goal in its own words and shows one way a developer might attempt to address it using vsl-core's real primitives — runnable code, actual output, and an honest "we don't attempt this" wherever vsl-core has nothing relevant to offer. Whether a given implementation built this way actually satisfies a given framework, for a real deployment, is a question for a qualified auditor or compliance professional, not something this package or that document can settle in advance.
 
 ## The F1/F2 assurance distinction (read this before trusting any Assurance Level)
 
@@ -139,7 +139,7 @@ ledger.write_gate_decision(
 
 The handover is a `MONITOR` entry with `drift_detected` False (a hand-off is not drift) and a `HANDOVER_KEY` (`"handover"`) payload of `{from_identity, to_identity, reason}`. No new entry type, so every ledger store accepts it unchanged.
 
-If you never call `ledger.write*` anywhere in your agent, you get real, working governance gates and zero audit trail — `vsl-core` will not warn you this happened, because from its point of view nothing went wrong: the gates it owns did exactly what they were compiled to do. An empty or missing `VerbaLedger` is indistinguishable, from inside this package, from an agent that has never once been gated. See [`docs/building-with-vsl-core.md`](docs/building-with-vsl-core.md)'s "know what's automatic and what you write yourself" for the full breakdown of which of the five steps (construct, compile, call, log, escalate) are automatic and which are entirely on you.
+If you never call `ledger.write*` anywhere in your agent, you get real, working governance gates and zero audit trail — `vsl-core` will not warn you this happened, because from its point of view nothing went wrong: the gates it owns did exactly what they were compiled to do. An empty or missing `VerbaLedger` is indistinguishable, from inside this package, from an agent that has never once been gated. See [`docs/building-with-vsl-core.md`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/building-with-vsl-core.md)'s "know what's automatic and what you write yourself" for the full breakdown of which of the five steps (construct, compile, call, log, escalate) are automatic and which are entirely on you.
 
 ## VSL construct → vsl_core object
 
@@ -175,7 +175,7 @@ If you never call `ledger.write*` anywhere in your agent, you get real, working 
 
 **Threshold note**: only Gamma's default threshold (1.1) was previously represented anywhere in this package. The spec also names a Jacobian "red flag" (`lambda_min(J_gov) < 0.05`) and a default KL monitoring threshold (0.15 nats) — both are now reference constants too, so a `DriftMonitor` implementer has the spec's own defaults available instead of re-deriving or mistyping them. Jacobian/KL computation itself stays out of core, same as Gamma estimation — these are just named numbers.
 
-**How a threshold is applied.** A Gamma threshold is 1 plus the estimation-error allowance it already includes (1.1 = 10%, 1.2 = 20%). `GammaEstimate.sufficient(threshold)` passes only when `gamma_hat` is strictly greater than `max(threshold, 1 + delta_estimation_error)`, which `required_gamma_hat(threshold)` returns: a monitor's declared error raises the bar only when it is larger than the allowance already in the threshold. Every pass therefore also means `robust_gamma() > 1`. Exactly on the bar does not pass. See [CHANGELOG.md](CHANGELOG.md) for the change from rules version 2026.10.
+**How a threshold is applied.** A Gamma threshold is 1 plus the estimation-error allowance it already includes (1.1 = 10%, 1.2 = 20%). `GammaEstimate.sufficient(threshold)` passes only when `gamma_hat` is strictly greater than `max(threshold, 1 + delta_estimation_error)`, which `required_gamma_hat(threshold)` returns: a monitor's declared error raises the bar only when it is larger than the allowance already in the threshold. Every pass therefore also means `robust_gamma() > 1`. Exactly on the bar does not pass. See [CHANGELOG.md](https://github.com/supersemantics/VSL-Core/blob/HEAD/CHANGELOG.md) for the change from rules version 2026.10.
 
 **What a Gamma value means today.** vsl-core never measures Gamma: your monitor computes `gamma_hat`, and the gate only compares it. For most actions (a refund, an email) the spec's Gamma cannot be measured directly, so what a monitor returns is a *gate score in Gamma units*. Make it an honest one:
 
@@ -239,7 +239,7 @@ Three additions to the ledger, all backward-compatible — existing single-decis
 `JsonlLedgerStore`, and optional `ImmuDBLedgerStore`. The immudb store writes
 the same hash-chained entries to local JSONL and immudb, with connection
 settings supplied by the application or environment. See
-[immudb ledger storage](docs/immudb-ledger.md) for setup and recovery.
+[immudb ledger storage](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/immudb-ledger.md) for setup and recovery.
 `VerbaLedger` uses the same `LedgerStore` interface for every store, so
 any other durable store can be plugged in the same way.
 
@@ -275,13 +275,17 @@ Compiling a gate is the framework-agnostic half of the story. *Where* and *how* 
 
 **One hook per guarded action.** If the framework gives you a natural per-action extension point — a node in a graph, a middleware slot, a decorator — wrap that action so the gate is checked immediately before it runs, and route around a denial the way the framework already routes. This is the common case, and it's what [`vsl-langgraph`](https://github.com/supersemantics/VSL-Langgraph)'s `gated_node`/`route_on_denial` helpers assume.
 
-**No per-action hook — call the gate directly inside whatever dispatch point already exists.** Some real applications route every action through one shared dispatcher instead — e.g. a single "execute whichever tool the model picked" function, common in tool-calling agents — rather than one hook per action. There's nothing to *wrap* in that shape. The compiled gate is still just `async def gate(candidate_input) -> None`, so you call it directly, inline, immediately before the specific action you're guarding that call site, and catch the exception yourself. No adapter change needed — the gate doesn't know or care how it's called, which is exactly why this works without modification. Proven on a real, unfamiliar, third-party production LangGraph template that turned out to use a single shared tool dispatcher, not one node per tool — see [`building-with-vsl-core.md`](docs/building-with-vsl-core.md#retrofitting-an-existing-agent-a-real-case-study) for the full case study.
+**No per-action hook — call the gate directly inside whatever dispatch point already exists.** Some real applications route every action through one shared dispatcher instead — e.g. a single "execute whichever tool the model picked" function, common in tool-calling agents — rather than one hook per action. There's nothing to *wrap* in that shape. The compiled gate is still just `async def gate(candidate_input) -> None`, so you call it directly, inline, immediately before the specific action you're guarding that call site, and catch the exception yourself. No adapter change needed — the gate doesn't know or care how it's called, which is exactly why this works without modification. Proven on a real, unfamiliar, third-party production LangGraph template that turned out to use a single shared tool dispatcher, not one node per tool — see [`building-with-vsl-core.md`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/building-with-vsl-core.md#retrofitting-an-existing-agent-a-real-case-study) for the full case study.
 
 ## Install
 
 ```
-pip install git+https://github.com/supersemantics/VSL-Core.git
+pip install super-semantics-vsl
 ```
+
+The package is published as `super-semantics-vsl`; in code you `import vsl_core` (the distribution
+name and the module name differ, as with `beautifulsoup4` and `bs4`). For the optional immudb ledger
+store: `pip install "super-semantics-vsl[immudb]"`.
 
 For local development:
 
@@ -290,8 +294,6 @@ git clone https://github.com/supersemantics/VSL-Core.git
 cd VSL-Core
 pip install -e .
 ```
-
-Not yet published to PyPI. The reserved distribution name is `super-semantics-vsl` (set in `pyproject.toml`) — once published, install will be `pip install super-semantics-vsl`, and you'll still `import vsl_core` in code (the distribution name and the importable module name are different, same as e.g. `beautifulsoup4`/`bs4`).
 
 ## Package layout
 
@@ -324,4 +326,4 @@ should return nothing. A fresh virtual environment containing only `vsl-core` an
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright Super Semantics.
+MIT — see [LICENSE](https://github.com/supersemantics/VSL-Core/blob/HEAD/LICENSE). Copyright Super Semantics.
