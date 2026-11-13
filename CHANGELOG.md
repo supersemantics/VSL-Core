@@ -2,7 +2,7 @@
 
 What changed in each release, and why. Newest first.
 
-## 0.3.1 — published on PyPI
+## 0.3.1 — published on PyPI (2026-11-13, tag `v0.3.1`)
 
 The first version on PyPI: `pip install super-semantics-vsl` (imported as `vsl_core`). The code is
 unchanged from 0.3.0.
