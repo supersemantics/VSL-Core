@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "super-semantics-vsl"
-version = "0.3.1"
+version = "0.3.2"
 description = "Framework-agnostic and model-agnostic VSL (VERBA Specification Language) governance primitives."
 readme = "README.md"
 license = { text = "MIT" }

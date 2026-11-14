@@ -23,6 +23,69 @@ the official Python SDK. MIT licensed.
 
 If you're building an adapter for a specific framework, see [Building an adapter](#building-an-adapter) below, or start from [`vsl-langgraph`](https://github.com/supersemantics/VSL-Langgraph)'s source as a real, working reference — its own `docs/` also cover lessons that generalize past LangGraph specifically (see `beyond-the-gate.md` and `dos-and-donts.md`).
 
+## Quickstart: gate a tool call in 5 lines
+
+```
+pip install super-semantics-vsl
+```
+
+Your agent has a tool, say `issue_refund`. You want a rule checked **before** the tool runs, and the
+call stopped if the rule fails. That check is a gate:
+
+```python
+from vsl_core import AssuranceBasis, F2Modification, Invariant, InvariantViolation
+from vsl_core.conformance.reference_adapter import PlainPythonReferenceAdapter
+
+async def within_cap(args): return args["amount"] <= 500
+cap = Invariant(name="refund-cap", description="Refunds of $500 or less.", rule=within_cap,
+                assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE))
+gate = PlainPythonReferenceAdapter().compile_invariant(cap)
+
+async def refund(args):
+    await gate(args)              # raises InvariantViolation if the rule fails
+    return issue_refund(**args)   # only reached when it holds
+```
+
+What each line does:
+
+- `within_cap` is the rule: plain code that answers yes or no for this one call.
+- `Invariant` gives the rule a name and says how strong the check is. It runs before the action
+  (`f1_pre_commitment=True`) and changes nothing about what a model produces (`F2Modification.NONE`).
+  That makes its assurance level LOW: it blocks, but it doesn't steer a model. See
+  [F1/F2](#the-f1f2-assurance-distinction-read-this-before-trusting-any-assurance-level) below.
+- `compile_invariant` turns the rule into a gate: an async function that returns when the rule holds
+  and raises when it doesn't. `PlainPythonReferenceAdapter` is the adapter for plain Python, with no
+  agent framework underneath.
+- `await gate(args)` goes right before the tool. If it raises, the tool never runs.
+
+`refund({"order_id": "A200", "amount": 9000})` raises `InvariantViolation` ("Invariant 'refund-cap'
+violated") and no refund is issued. The whole file, ready to run, is
+[`examples/quickstart.py`](https://github.com/supersemantics/VSL-Core/blob/HEAD/examples/quickstart.py).
+
+**Keep a record of each decision.** The gate blocks on its own, but writes nothing down (see
+[The ledger doesn't write itself](#the-ledger-doesnt-write-itself-read-this-before-assuming-an-audit-trail-exists)).
+To keep a hash-chained record of every allow and deny, write it from the rule:
+
+```python
+from vsl_core import VerbaLedger
+
+ledger = VerbaLedger()   # in memory; VerbaLedger(JsonlLedgerStore("decisions.jsonl")) for a file
+
+async def within_cap(args):
+    allowed = args["amount"] <= 500
+    ledger.write_gate_decision(identity_key="refund-agent", primitive_name="refund-cap", allowed=allowed)
+    return allowed
+```
+
+`ledger.verify_integrity()` returns `True` while no entry has been changed.
+
+**Using an agent framework?** The adapters compile the same `Invariant` into the framework's own hook:
+[`vsl-langgraph`](https://github.com/supersemantics/VSL-Langgraph) (LangGraph),
+[`vsl-langchain`](https://github.com/supersemantics/VSL-LangChain) (LangChain) and
+[`vsl-maf`](https://github.com/supersemantics/VSL-Microsoft-agent-framework) (Microsoft Agent
+Framework), all on PyPI. For a complete agent to start from, see the
+[starter templates](https://github.com/supersemantics/supersemantics-VSL-Starters).
+
 ## Getting started (including with an AI coding assistant)
 
 [`docs/building-with-vsl-core.md`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/building-with-vsl-core.md) is the guide for going from "I have an agent, or an idea for one" to working code: how to find the decision points that actually need governing, which parts of the flow are automatic versus something you write yourself, and a domain-agnostic project scaffold with a worked example. Its companion, [`docs/vsl-core-primitives.json`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/vsl-core-primitives.json), is the same material as exact, structured facts — every class, field, and code sample in it has been executed against the real package. Both are written to be handed directly to an AI coding assistant (Claude Code, Codex, or similar) as reference material — no special setup required, though pointing your own project's `CLAUDE.md`/equivalent at them is what makes an assistant reach for them without being asked each time.
