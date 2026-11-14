@@ -2,7 +2,7 @@
 
 What changed in each release, and why. Newest first.
 
-## 0.3.2: quickstart, gate a tool call in 5 lines
+## 0.3.2 (2026-11-14, tag `v0.3.2`): quickstart, gate a tool call in 5 lines
 
 The code is unchanged from 0.3.1.
 
