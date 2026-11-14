@@ -2,6 +2,22 @@
 
 What changed in each release, and why. Newest first.
 
+## 0.3.2: quickstart, gate a tool call in 5 lines
+
+The code is unchanged from 0.3.1.
+
+**Before:** the README opened with what vsl-core is and isn't, then sent new readers to a long guide.
+There was no short, runnable path from `pip install` to a blocked tool call.
+
+**After:** a "Quickstart: gate a tool call in 5 lines" section near the top of the README: a rule, an
+`Invariant`, the gate, and the call before the tool, with each line explained in plain language. It
+also shows how to record each decision in the ledger, and points to the framework adapters and the
+starter templates. The same code is in `examples/quickstart.py`, and a test runs it, so the README
+can't drift from the package.
+
+**Why:** the README is the PyPI page. Someone arriving there should be able to gate a real tool call
+in a minute, and see what the gate does and does not claim (it blocks; it doesn't steer a model).
+
 ## 0.3.1 — published on PyPI (2026-11-13, tag `v0.3.1`)
 
 The first version on PyPI: `pip install super-semantics-vsl` (imported as `vsl_core`). The code is
