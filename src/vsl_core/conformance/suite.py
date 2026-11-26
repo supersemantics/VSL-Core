@@ -14,12 +14,8 @@ from typing import Any
 
 from ..constructs import Invariant, PreNode
 from ..exceptions import AutomationDeniedException, ConformanceError, InvariantViolation
-from ..metrics import AssuranceBasis, F2Modification, GammaEstimate
+from ..metrics import GammaEstimate
 from .protocol import VSLAdapter
-
-# These synthetic PreNodes are genuinely formation-layer, full-F2 checks --
-# HIGH is the correct, justified claim for them, not a lazy default.
-_HIGH_ASSURANCE_BASIS = AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL)
 
 
 def _require_callable_gate(adapter: object, method_name: str, gate: object) -> None:
@@ -45,7 +41,6 @@ async def _check_pre_node_blocks_before_side_effect(adapter: VSLAdapter) -> list
         name="conformance-blocking",
         description="Conformance check: below-threshold Gamma must block.",
         monitor=insufficient_monitor,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
         gamma_threshold=1.1,
     )
     gate = adapter.compile_pre_node(pre_node)
@@ -86,7 +81,6 @@ async def _check_pre_node_allows_after_pass(adapter: VSLAdapter) -> list[str]:
         name="conformance-passing",
         description="Conformance check: above-threshold Gamma must pass through.",
         monitor=sufficient_monitor,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
         gamma_threshold=1.1,
     )
     gate = adapter.compile_pre_node(pre_node)
@@ -124,7 +118,6 @@ async def _check_invariant_violation_is_specific_type(adapter: VSLAdapter) -> li
         name="conformance-invariant-fail",
         description="Conformance check: a failing rule must raise InvariantViolation.",
         rule=failing_rule,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
     )
     gate = adapter.compile_invariant(invariant)
     _require_callable_gate(adapter, "compile_invariant", gate)
@@ -157,7 +150,6 @@ async def _check_invariant_pass(adapter: VSLAdapter) -> list[str]:
         name="conformance-invariant-pass",
         description="Conformance check: a passing rule must not raise.",
         rule=passing_rule,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
     )
     gate = adapter.compile_invariant(invariant)
     _require_callable_gate(adapter, "compile_invariant", gate)
@@ -186,7 +178,6 @@ async def _check_gate_reusable_without_state_leak(adapter: VSLAdapter) -> list[s
         name="conformance-reusable",
         description="Conformance check: a compiled gate must be reusable across calls.",
         monitor=conditional_monitor,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
         gamma_threshold=1.1,
     )
     gate = adapter.compile_pre_node(pre_node)

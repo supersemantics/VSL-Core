@@ -27,22 +27,9 @@ ROBUST_GAMMA_HIGH_STAKES_THRESHOLD: float = 1.2
 
 
 class AssuranceLevel(str, Enum):
-    """HIGH / MEDIUM / LOW confidence rating per the F1/F2 test.
-
-    A mechanism satisfying F1 (pre-commitment) but only partial F2 (energy-
-    landscape modification) -- e.g. a gate in front of a hosted model API
-    call whose prompt the application writes -- caps at MEDIUM, never HIGH.
-    This distinction must never be blurred by any code or docs built on top
-    of this package.
-
-    The level measures one thing: how deeply governance shapes what the
-    model produces. Whether a gate blocks the action before it happens is
-    F1, and is best reported on its own rather than read off the level --
-    a gate with F1=True and F2=NONE is LOW here, yet it still stops every
-    action it denies.
-
-    Prefer constructing this via AssuranceBasis.derived_level rather than
-    setting it directly -- see AssuranceBasis below.
+    """Deprecated; removed in 1.0. vsl-core no longer reports an assurance
+    level. Kept only so existing imports keep working. What vsl-core reports
+    instead is Enforcement (vsl_core.ledger), computed from the ledger.
     """
 
     HIGH = "HIGH"
@@ -51,27 +38,8 @@ class AssuranceLevel(str, Enum):
 
 
 class F2Modification(str, Enum):
-    """How fully an intervention modifies the energy function E_gov(x) =
-    E_0(x) + U(x), per the source spec's F2 test.
-
-    F2 is judged at the call the gate guards: what does the application do
-    to the model there? It is never earned by the gate itself -- allowing or
-    blocking an action changes nothing about what a model produces.
-
-    FULL: directly modifies the energy function (logit adjustment,
-    activation steering, fine-tuning, constitutional training). Needs a
-    model whose internals the application controls; a hosted model API
-    rules it out.
-    PARTIAL: shapes output through attention/context rather than direct
-    energy modification -- the application changes what the model sees
-    (its own system prompt, RAG context injection, redacting the input).
-    INDIRECT: affects sampling without touching the energy function itself
-    (temperature adjustment).
-    NONE: the gate only allows or blocks, and the application shapes
-    nothing at the guarded call -- or no model is involved at all (an
-    amount cap before issue_refund, an allow-list before send_email).
-
-    When unsure, pick the lowest value the code honestly supports.
+    """Deprecated; removed in 1.0. Has no effect: vsl-core takes no F2 value
+    from callers. Kept only so existing imports keep working.
     """
 
     FULL = "FULL"
@@ -82,43 +50,10 @@ class F2Modification(str, Enum):
 
 @dataclass(frozen=True)
 class AssuranceBasis:
-    """The F1/F2 facts an AssuranceLevel must be derived from, rather than
-    asserted directly.
-
-    Before this type existed, AllowedState.assurance_level and
-    PreNode.assurance_level were freely-settable fields -- nothing stopped
-    a caller from writing assurance_level=AssuranceLevel.HIGH on a
-    mechanism that was actually output-layer. AssuranceBasis makes the two
-    load-bearing facts (F1: does this run before commitment? F2: how fully
-    does it modify the energy function?) the only inputs, and derives the
-    level from them.
-
-    derived_level implements the source table exhaustively:
-      F1=False                       -> LOW,  for any F2 value
-      F1=True,  F2=FULL               -> HIGH
-      F1=True,  F2 in {PARTIAL, INDIRECT} -> MEDIUM
-      F1=True,  F2=NONE               -> LOW
-
-    That last row (F1=True, F2=NONE) is not in the source paper's table --
-    the paper never covers a mechanism that runs before commitment but
-    claims zero energy-landscape effect. This is a deliberate interpretive
-    extension, not a spec fact: a check that runs early but does nothing to
-    the distribution isn't governance in the Gamma-sufficiency sense, so it
-    is treated the same as output-layer (LOW) rather than left undefined.
-    LOW here describes influence on the model, not enforcement: such a gate
-    still blocks every action it denies (that is its F1).
-
-    __post_init__ requires f1_pre_commitment to actually be a bool and
-    f2_modification to actually be an F2Modification member. Before these
-    checks existed, a caller could write f1_pre_commitment=None (falsy, so
-    `not self.f1_pre_commitment` silently derives LOW) or
-    f2_modification=None (or any other garbage value, so derived_level
-    would silently fall through every branch to LOW) -- either way, an
-    accidental, unflagged LOW indistinguishable from a deliberate one. This
-    does not make derived_level *correct* (nothing here can verify a stated
-    F1/F2 fact reflects what the gated mechanism actually does -- see
-    F2Modification's own docstring), it only guarantees both values were a
-    real, deliberate choice rather than an unnoticed accident.
+    """Deprecated; removed in 1.0. Constructs no longer take it: passing one
+    as `assurance_basis` raises a FutureWarning and changes nothing. Kept
+    only so existing imports and adapters released before 0.4.0 keep
+    working. Its validation and derived_level are unchanged.
     """
 
     f1_pre_commitment: bool

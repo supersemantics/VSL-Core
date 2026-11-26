@@ -43,6 +43,7 @@ from .governance import (
 from .identity import ClusterKey, Evidence, IdentityKey, Instance
 from .immudb_store import ImmuDBConfig, ImmuDBLedgerStore, ImmuDBSyncError
 from .ledger import (
+    ACTION_KEY,
     DRIFT_DETECTED_KEY,
     GATE_ALLOWED_KEY,
     HANDOVER_KEY,
@@ -55,6 +56,7 @@ from .ledger import (
     VERIFICATION_RESULT_KEY,
     InMemoryLedgerStore,
     JsonlLedgerStore,
+    Enforcement,
     LedgerAuditReport,
     LedgerCheckpoint,
     LedgerEntry,
@@ -83,7 +85,7 @@ from .metrics import (
 )
 from .rules_version import ASSURANCE_RULES_VERSION
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "__version__",
@@ -135,6 +137,8 @@ __all__ = [
     "PRIMITIVE_NAME_KEY",
     "GATE_ALLOWED_KEY",
     "HANDOVER_KEY",
+    "ACTION_KEY",
+    "Enforcement",
     "RULES_VERSION_KEY",
     "VerificationResult",
     "LEDGER_SCHEMA_VERSION",

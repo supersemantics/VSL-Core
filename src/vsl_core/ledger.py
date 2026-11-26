@@ -85,6 +85,30 @@ RULES_VERSION_KEY: str = "rules_version"
 # Written by write_handover(); anything that reads handovers back from a
 # ledger looks for exactly this key.
 HANDOVER_KEY: str = "handover"
+# An action record's payload key: {"name"}. Written by write_action() when
+# the guarded action actually runs; VerbaLedger.enforcement() compares it
+# with the decision's gate records.
+ACTION_KEY: str = "action"
+
+
+class Enforcement(str, Enum):
+    """Whether a decision's gates held before its action, as the ledger
+    shows it (VerbaLedger.enforcement). Computed from the order of records,
+    never declared.
+
+    BEFORE_ACTION: every recorded action came after an allowing decision
+    from each gate recorded before it; or the gate denied and no action
+    was recorded.
+    AFTER_ACTION: an action was recorded with no gate decision before it,
+    or after a gate's most recent decision was a deny. The gate did not
+    hold that action.
+    NOT_OBSERVED: the ledger can't tell. There is no action record to
+    compare against, or no gate record at all.
+    """
+
+    BEFORE_ACTION = "BEFORE_ACTION"
+    AFTER_ACTION = "AFTER_ACTION"
+    NOT_OBSERVED = "NOT_OBSERVED"
 
 
 class VerificationResult(str, Enum):
@@ -540,6 +564,48 @@ class VerbaCertificate:
         )
 
 
+def _is_gate_record(entry: LedgerEntry) -> bool:
+    return (
+        entry.entry_type == LedgerEntryType.MONITOR
+        and PRIMITIVE_NAME_KEY in entry.payload
+        and isinstance(entry.payload.get(GATE_ALLOWED_KEY), bool)
+    )
+
+
+def _is_action_record(entry: LedgerEntry) -> bool:
+    return entry.entry_type == LedgerEntryType.MONITOR and isinstance(entry.payload.get(ACTION_KEY), dict)
+
+
+def _is_handover_record(entry: LedgerEntry) -> bool:
+    return entry.entry_type == LedgerEntryType.MONITOR and isinstance(entry.payload.get(HANDOVER_KEY), dict)
+
+
+def _judge_enforcement(records: list[LedgerEntry], primitive_name: str | None) -> Enforcement:
+    records = sorted(records, key=lambda e: e.sequence)
+    gates = [
+        e for e in records
+        if _is_gate_record(e) and (primitive_name is None or e.payload[PRIMITIVE_NAME_KEY] == primitive_name)
+    ]
+    actions = [e for e in records if _is_action_record(e)]
+    if not gates:
+        return Enforcement.AFTER_ACTION if actions and primitive_name is None else Enforcement.NOT_OBSERVED
+    if not actions:
+        latest: dict[str, bool] = {}
+        for g in gates:
+            latest[g.payload[PRIMITIVE_NAME_KEY]] = g.payload[GATE_ALLOWED_KEY]
+        # A deny with no action after it held. An allow with no action
+        # record can't be judged: the action may have run unrecorded.
+        return Enforcement.BEFORE_ACTION if not all(latest.values()) else Enforcement.NOT_OBSERVED
+    for action in actions:
+        latest = {}
+        for g in gates:
+            if g.sequence < action.sequence:
+                latest[g.payload[PRIMITIVE_NAME_KEY]] = g.payload[GATE_ALLOWED_KEY]
+        if not latest or not all(latest.values()):
+            return Enforcement.AFTER_ACTION
+    return Enforcement.BEFORE_ACTION
+
+
 _AUDIT_CHECKS: tuple[str, ...] = (
     "no_monitoring_gaps",
     "drift_flagged_monitor_has_pre_node",
@@ -783,6 +849,68 @@ class VerbaLedger:
             payload=payload,
         )
 
+    def write_action(
+        self,
+        *,
+        identity_key: str,
+        action_name: str,
+        decision_id: str,
+        cluster_key: str | None = None,
+        instance_id: str | None = None,
+        caused_by: str | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> LedgerEntry:
+        """Record that a guarded action actually ran, under the decision's
+        `decision_id`. Write it after the action, from the same code path
+        that performs it.
+
+        Written as a MONITOR entry (drift_detected False: running an
+        allowed action is not drift) whose payload carries `action` =
+        {name}. Together with the decision's gate records it is what
+        enforcement() reads: an action recorded before any gate decision,
+        or after a deny, shows the gate did not hold it.
+        """
+        if not decision_id:
+            raise ValueError("write_action needs the decision_id its gate decisions were recorded under.")
+        if not isinstance(action_name, str) or not action_name.strip():
+            raise ValueError("write_action needs the action's name.")
+        payload = {
+            **(extra_payload or {}),
+            ACTION_KEY: {"name": action_name},
+            DRIFT_DETECTED_KEY: False,
+        }
+        return self.write(
+            LedgerEntryType.MONITOR,
+            identity_key=identity_key,
+            cluster_key=cluster_key,
+            instance_id=instance_id,
+            decision_id=decision_id,
+            caused_by=caused_by,
+            payload=payload,
+        )
+
+    def enforcement(self, decision_id: str, *, primitive_name: str | None = None) -> Enforcement:
+        """Whether this decision's gates held before its action, judged
+        only from the order of its records (see Enforcement).
+
+        Gate records are write_gate_decision() entries and action records
+        are write_action() entries, both under `decision_id`. Pass
+        `primitive_name` to judge one gate only. For each action record:
+        every gate with a record before it must have allowed in its most
+        recent record, and at least one gate record must come first.
+        """
+        records = [e for e in self.store.all_entries() if e.decision_id == decision_id]
+        return _judge_enforcement(records, primitive_name)
+
+    def enforcement_by_decision(self) -> dict[str, Enforcement]:
+        """enforcement() for every decision_id in the ledger that has a gate
+        or action record."""
+        by_decision: dict[str, list[LedgerEntry]] = {}
+        for entry in self.store.all_entries():
+            if entry.decision_id and (_is_gate_record(entry) or _is_action_record(entry)):
+                by_decision.setdefault(entry.decision_id, []).append(entry)
+        return {d: _judge_enforcement(records, None) for d, records in by_decision.items()}
+
     def current_checkpoint(self) -> LedgerCheckpoint | None:
         """Return the chain's current tip, or None for an empty ledger.
 
@@ -840,7 +968,13 @@ class VerbaLedger:
 
         monitor_entries = [e for e in entries if e.entry_type == LedgerEntryType.MONITOR]
         if max_monitor_gap_seconds is not None:
-            sorted_monitors = sorted(monitor_entries, key=lambda e: e.timestamp)
+            # Action and handover records are MONITOR entries too, but they
+            # record what happened, not monitoring: counting them would let
+            # frequent actions hide a real gap in monitoring.
+            sorted_monitors = sorted(
+                (e for e in monitor_entries if not (_is_action_record(e) or _is_handover_record(e))),
+                key=lambda e: e.timestamp,
+            )
             gap_violations = [
                 f"{prev.entry_id}->{curr.entry_id}"
                 for prev, curr in zip(sorted_monitors, sorted_monitors[1:])

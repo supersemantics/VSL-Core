@@ -48,7 +48,7 @@ Construct → compile → call → log → escalate. This is the same five-step 
 
 ```python
 # 1. Construct — pure data + callables, nothing live yet
-gate_spec = PreNode(name=..., monitor=..., assurance_basis=AssuranceBasis(...))
+gate_spec = PreNode(name=..., description=..., monitor=...)
 
 # 2. Compile — turns the spec into an actual callable gate
 adapter = PlainPythonReferenceAdapter()  # or a named framework adapter, e.g. vsl_langgraph.LangGraphAdapter()
@@ -57,10 +57,13 @@ gate = adapter.compile_pre_node(gate_spec)
 # 3. Call — immediately before the real action
 await gate(candidate_input)  # raises if blocked; the real action only runs after this returns
 
-# 4. Log — your own code, not automatic: one standard record per gate decision
+# 4. Log — your own code, not automatic: one standard record per gate decision,
+#    and one action record when the real action runs
 ledger.write_gate_decision(identity_key=..., primitive_name=gate_spec.name,
                            estimate=estimate, gamma_threshold=gate_spec.gamma_threshold,
                            decision_id=...)  # from inside the monitor; see the README
+ledger.write_action(identity_key=..., action_name=..., decision_id=...)  # after the action
+# ledger.enforcement(decision_id) then reads BEFORE_ACTION, AFTER_ACTION or NOT_OBSERVED
 
 # 5. Escalate — only on the exception path, only if you catch it
 except InvariantViolation:
@@ -82,8 +85,7 @@ tools.py        The actual functions that perform side-effecting actions —
                 the "controlled tools" this domain needs
                 (e.g. issue_refund, send_email, book_appointment)
 governance.py   Constructs the PreNode/Invariant/TerminalState/Cluster objects,
-                one per decision point found in Step 1. Every AssuranceBasis
-                here is justified with real F1/F2 facts, never defaulted to HIGH.
+                one per decision point found in Step 1.
 agent.py        Orchestrates: decide what to do -> compile gates -> call gates
                 before each tools.py action -> write ledger entries -> catch
                 exceptions and handle TerminalState/re-enablement.
@@ -106,8 +108,8 @@ Prompt: *"Build me a deterministic agent for a customer support bot that can loo
 **Build it:**
 - `domain.py`: `Customer`, `Order`, `RefundRequest`.
 - `tools.py`: `lookup_order(order_id)`, `issue_refund(order, amount)`, `send_email(customer, subject, body)`.
-- `governance.py`: an `Invariant` named `refund_within_policy` (pattern B's shape) and a `PreNode` named `email_content_gate` (pattern A's shape), each with a real `AssuranceBasis` — both checks run before the actual `tools.py` call fires (F1=True). Both only allow or block, and no model is involved at the guarded call, so both are F2=`NONE`, which derives LOW. Deciding whether an action happens at all is F1, not F2; the LOW describes influence on a model, not how well the gates enforce. Had `send_email`'s body been drafted by a hosted model with the application's own system prompt, the email gate would be F2=`PARTIAL` (MEDIUM).
-- `agent.py`: compiles both via `PlainPythonReferenceAdapter`, calls `email_content_gate` before every `send_email`, calls `refund_within_policy` before every `issue_refund`, catches `InvariantViolation` from the refund check and routes to a `governance_halt` `TerminalState`, writes `MONITOR`/`PRE_NODE`/`VERIFICATION` entries to a `VerbaLedger` around each gated call.
+- `governance.py`: an `Invariant` named `refund_within_policy` (pattern B's shape) and a `PreNode` named `email_content_gate` (pattern A's shape). Both checks run before the actual `tools.py` call fires, which the ledger then shows as `BEFORE_ACTION` for each decision.
+- `agent.py`: compiles both via `PlainPythonReferenceAdapter`, calls `email_content_gate` before every `send_email`, calls `refund_within_policy` before every `issue_refund`, catches `InvariantViolation` from the refund check and routes to a `governance_halt` `TerminalState`, writes gate-decision records, an action record after each `tools.py` call, and `PRE_NODE`/`VERIFICATION` entries on denials to a `VerbaLedger`.
 - `tests/`: one test proving `refund_within_policy` blocks an out-of-policy refund, one proving it passes a valid one, same pair for the email gate.
 
 That's the whole procedure, run once, end to end, on a use case this document didn't already know about.
@@ -138,13 +140,9 @@ _email_recipient_invariant = Invariant(
     name="email-recipient-user-specified",
     description="send_refund_email's recipient must appear in text the human actually typed -- non-bypassable.",
     rule=_recipient_was_user_specified,
-    # Only allows or blocks the send; no model is shaped at the guarded call.
-    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
 )
 _email_recipient_gate = LangGraphAdapter().compile_invariant(_email_recipient_invariant)
 ```
-
-(The retrofit as first published declared `F2Modification.FULL` here. That overclaims: the rule decides whether the send happens, which is F1, and changes nothing about what the model produces. It is corrected to `NONE` above.)
 
 Called directly inside the existing dispatcher — no per-tool node to wrap:
 
