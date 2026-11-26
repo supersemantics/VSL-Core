@@ -16,14 +16,14 @@ The framework text quoted below is drawn from each framework's own primary sourc
 
 ## The primitives this document draws on
 
-These are real, tested vsl-core constructs (137 tests passing, `run_conformance_suite() == []`). What follows is what each one structurally does — not a claim about which regulation it satisfies.
+These are real, tested vsl-core constructs (the full test suite passing, `run_conformance_suite() == []`). What follows is what each one structurally does — not a claim about which regulation it satisfies.
 
 | Primitive | What it structurally does |
 |---|---|
 | **PreNode** (`constructs.py`) | Gates a single transition behind a `monitor` callback that returns a `GammaEstimate`, checked against a `gamma_threshold`, with a `Fallback` (retry, then escalate) on insufficiency. The action cannot proceed without the gate returning normally. |
 | **Invariant** (`constructs.py`) | An always-on hard constraint, independent of `PreNode`. Raises `InvariantViolation` — not a bare exception — on failure, and can optionally name a `TerminalState` to enter immediately. |
-| **AllowedState / InadmissibleState** (`constructs.py`) | Every outcome resolves to one of these two classifications. `AllowedState` carries an `AssuranceBasis`; `InadmissibleState` carries a `signature` and an optional `energy_gap_proxy` instead — nothing executes unclassified. |
-| **AssuranceBasis** (`metrics.py`) | A derived, read-only grade (HIGH/MEDIUM/LOW) computed from two facts you supply: was this checked *before* commitment (F1), and how much does the application change what the model produces at the guarded call (F2: FULL/PARTIAL/INDIRECT/NONE). You can't just assert HIGH — you have to state what makes it HIGH, and the grade is recomputed from those facts every time. |
+| **AllowedState / InadmissibleState** (`constructs.py`) | Every outcome resolves to one of these two classifications. `AllowedState` carries a `measurement`; `InadmissibleState` carries a `signature` and an optional `energy_gap_proxy` instead — nothing executes unclassified. |
+| **Enforcement** (`ledger.py`) | Whether a decision's gate held before its action — `BEFORE_ACTION`, `AFTER_ACTION` or `NOT_OBSERVED` — computed from the order of the decision's gate and action records in the ledger, never declared by the developer. |
 | **Cluster** (`cluster.py`) | Aggregates constituent systems by `IdentityKey` (not by process `Instance`), with construction-time validation that every declared constituent is actually covered by the cluster's own key. An attempt at "a cluster can't silently omit one of its own members" — not a claim that multi-agent composition risk is solved. |
 | **Identity layer + `request_re_enablement()`** (`identity.py`, `governance.py`) | Scoped agent/instance identity, plus a single named path back into operation after a suspension — one that requires a `GovernanceAuthority`, a named human approver, and structured `Evidence` before it will construct a `HumanAuthorisedTransition`. |
 | **VerbaLedger** (`ledger.py`) | A hash-chained, append-only log with seven entry types and an `audit()` method running five named cross-referencing checks (not just presence checks). A single-byte tamper anywhere in a persisted chain flips `verify_integrity()` from `True` to `False` — confirmed live, not just claimed. `current_checkpoint()` exposes the chain's current tip for external witnessing (Artifact 6) — it does no anchoring or signing itself. |
@@ -40,7 +40,7 @@ These are the actual code patterns referenced throughout the framework sections 
 
 ```python
 from vsl_core.constructs import PreNode, Fallback
-from vsl_core.metrics import AssuranceBasis, F2Modification, GammaEstimate
+from vsl_core.metrics import GammaEstimate
 
 ALLOWED_TOOLS = {"lookup_order", "issue_refund_under_50"}
 
@@ -52,8 +52,6 @@ tool_call_gate = PreNode(
     name="tool_call_gate",
     description="A tool call only proceeds if it's within this agent's declared scope",
     monitor=within_declared_scope,
-    # Runs before the tool call (F1); only allows or blocks it (F2 NONE).
-    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
     fallback=Fallback(max_retries=1, on_max_retries="AUTOMATION_DENIED"),
 )
 ```
@@ -63,7 +61,6 @@ An attempt at "no high-impact action without a check beforehand" — not a claim
 
 ```python
 from vsl_core.constructs import Invariant, TerminalState
-from vsl_core.metrics import AssuranceBasis, F2Modification
 
 governance_halt = TerminalState(
     name="governance_halt",
@@ -78,8 +75,6 @@ payment_required = Invariant(
     name="payment_required",
     description="Never confirm a booking without a verified payment method",
     rule=payment_is_verified,
-    # Runs before the booking is confirmed (F1); only allows or blocks it (F2 NONE).
-    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
     on_violation=governance_halt,
 )
 ```
@@ -139,17 +134,23 @@ checkout_cluster = Cluster(name="checkout_flow", cluster_key=cluster_key, consti
 
 ## What the resulting artifacts actually look like
 
-Several frameworks below ask for something concrete: a log, an audit record, a documented assurance level. This is what those actually look like when Examples A–E above are run — real output from the real package, not hand-written illustrations. Referenced from the framework entries below as "(Artifact 1)" etc. rather than repeated inline.
+Several frameworks below ask for something concrete: a log, an audit record, evidence that a check ran before the action. This is what those actually look like when Examples A–E above are run — real output from the real package, not hand-written illustrations. Referenced from the framework entries below as "(Artifact 1)" etc. rather than repeated inline.
 
-**Artifact 1 — `AssuranceBasis` derivation, across a few different F1/F2 combinations:**
+**Artifact 1 — `enforcement_by_decision()`, computed from the ledger:**
+```python
+ledger.write_gate_decision(identity_key="booking-agent", primitive_name="payment_required", allowed=True, decision_id="b-101")
+ledger.write_action(identity_key="booking-agent", action_name="confirm_booking", decision_id="b-101")
+ledger.write_gate_decision(identity_key="booking-agent", primitive_name="payment_required", allowed=False, decision_id="b-102")
+ledger.write_action(identity_key="booking-agent", action_name="confirm_booking", decision_id="b-103")
+ledger.write_gate_decision(identity_key="booking-agent", primitive_name="payment_required", allowed=True, decision_id="b-104")
 ```
-AssuranceBasis(f1_pre_commitment=True,  f2_modification=FULL).derived_level     == HIGH
-AssuranceBasis(f1_pre_commitment=True,  f2_modification=PARTIAL).derived_level  == MEDIUM
-AssuranceBasis(f1_pre_commitment=True,  f2_modification=INDIRECT).derived_level == MEDIUM
-AssuranceBasis(f1_pre_commitment=True,  f2_modification=NONE).derived_level     == LOW
-AssuranceBasis(f1_pre_commitment=False, f2_modification=FULL).derived_level    == LOW
 ```
-The grade is always recomputed from the two stated facts — there's no path to writing "HIGH" without also stating why.
+b-101 BEFORE_ACTION    allowed, then the booking was confirmed
+b-102 BEFORE_ACTION    denied, and no booking followed
+b-103 AFTER_ACTION     a booking was confirmed with no gate decision before it
+b-104 NOT_OBSERVED     allowed, but no action record to compare with
+```
+Nothing here is declared: each value comes from the order of the records. It shows whether a check ran before the action, not how well the check itself is designed.
 
 **Artifact 2 — one raw ledger entry, as it's actually stored:**
 ```json
@@ -234,7 +235,7 @@ Each entry below states the framework's own goal, in its own words (with the pri
 
 - **GOVERN** (real text: GOVERN 1.5 calls for "periodic review of content provenance and incident monitoring"; GOVERN 1.7 calls for protocols so systems "are able to be deactivated when necessary") — *an attempt:* Example C's human-authorised path plus Example D's audit trail (Artifact 3 is what that periodic review would actually look at).
 - **MAP** (real text: "identification and analysis of... known and reasonably foreseeable risks") — *an attempt:* the Drift Class catalog is exactly this kind of upfront, named risk taxonomy, honestly scored rather than assumed complete.
-- **MEASURE** (real text: "assurance criteria are measured... and demonstrated") — *an attempt:* `AssuranceBasis`'s derived HIGH/MEDIUM/LOW grade (Artifact 1), computed from stated F1/F2 facts rather than asserted.
+- **MEASURE** (real text: "assurance criteria are measured... and demonstrated") — *an attempt:* `enforcement_by_decision()` (Artifact 1), which measures from the ledger whether each decision's check ran before its action, rather than taking a developer's word for it. It does not measure how good a check is.
 - **MANAGE** (real text: "supersede, disengage, or deactivate," "post-deployment monitoring... appeal and override... incident response, recovery") — *an attempt:* Example C (deactivation/recovery) and Example D (post-deployment monitoring). Worth noting: MANAGE's actual subcategories are about post-deployment response and recovery, not pre-action gating, so Examples A/B don't belong here even though they're the most obviously "governance-shaped" primitives in this document.
 
 ### EU AI Act (Regulation (EU) 2024/1689) — high-risk system obligations
@@ -243,8 +244,8 @@ Each entry below states the framework's own goal, in its own words (with the pri
 - **Art. 9 — Risk management system** (real text: "testing... carried out against prior defined metrics and probabilistic thresholds") — *an attempt:* Example A's `gamma_threshold` is a plain-Python shape of exactly that testing discipline; the Drift Class catalog addresses the "identification and analysis of... foreseeable risks" half.
 - **Art. 12 — Record-keeping** (real text: "technically allow for the automatic recording of events (logs) over the lifetime of the system") — *an attempt:* Example D, directly (Artifact 2 is what one such logged event actually looks like).
 - **Art. 14 — Human oversight** (real text: "interrupt... through a 'stop' button... come to a halt in a safe state"; "decide... to disregard, override or reverse the output") — *an attempt:* Example B's `on_violation → TerminalState` is the halt-to-safe-state mechanism; Example C is the human-authorised way back out (Artifact 5).
-- **Art. 15 — Accuracy, robustness, cybersecurity** — paragraph 1/3 (accuracy declared, consistent performance) is something `AssuranceBasis` (Artifact 1) and `VerbaCertificate` (Artifact 4) can speak to. *We don't attempt to address paragraph 5* (resilience against data/model poisoning, adversarial examples) — that's model-security hardening, not decision-gating.
-- **Annex IV — Technical documentation** (real text requires "test logs signed by responsible persons" and a "post-market monitoring plan") — *an attempt:* Example D can contribute the runtime logs and audit artifacts (Artifacts 2–4 — the raw log, the audit result, the certificate); `AssuranceBasis` and the Drift Class catalog supply the risk/metrics documentation Annex IV also asks for. Where responsible-person *signatures* are specifically required, that's outside what Example D provides on its own — an implementation would need to connect these records to a real digital-signature or organisational sign-off system.
+- **Art. 15 — Accuracy, robustness, cybersecurity** — paragraph 1/3 (accuracy declared, consistent performance) is something the enforcement record (Artifact 1) and `VerbaCertificate` (Artifact 4) can speak to. *We don't attempt to address paragraph 5* (resilience against data/model poisoning, adversarial examples) — that's model-security hardening, not decision-gating.
+- **Annex IV — Technical documentation** (real text requires "test logs signed by responsible persons" and a "post-market monitoring plan") — *an attempt:* Example D can contribute the runtime logs and audit artifacts (Artifacts 2–4 — the raw log, the audit result, the certificate); the enforcement record (Artifact 1) and the Drift Class catalog supply the risk/metrics documentation Annex IV also asks for. Where responsible-person *signatures* are specifically required, that's outside what Example D provides on its own — an implementation would need to connect these records to a real digital-signature or organisational sign-off system.
 
 ### CSA MAESTRO (7-layer threat model, Feb 2025)
 
@@ -265,7 +266,7 @@ Each entry below states the framework's own goal, in its own words (with the pri
 
 ISO 42001 certifies an organisation's AI management system — its policies, processes, and governance structure — not any single tool used inside it. A code library can't be ISO 42001-certified on its own; at most it can be one input into an organisation's broader management system, which is the only thing an accredited auditor actually certifies.
 
-Its Annex A control text is a commercial document, not accessible here without a paid copy, so nothing below asserts an Annex A control title or number. What's below stays at the level of the standard's main-body clause *structure* (risk assessment, impact assessment, monitoring, management review) — and even that structure is drawn from public secondary summaries of the standard, not from the primary ISO text itself, since the primary text isn't available without a purchase. Treat the clause numbers below as indicative, not as verified quotations: clause 6.1 (risk assessment) and 8.2 (AI system impact assessment) — *an attempt:* the Drift Class catalog plus Example A's testing discipline. Clause 9.1 (monitoring) and 9.3 (management review) — *an attempt:* Example D plus `AssuranceBasis`/`VerbaCertificate` (Artifacts 1, 3, 4).
+Its Annex A control text is a commercial document, not accessible here without a paid copy, so nothing below asserts an Annex A control title or number. What's below stays at the level of the standard's main-body clause *structure* (risk assessment, impact assessment, monitoring, management review) — and even that structure is drawn from public secondary summaries of the standard, not from the primary ISO text itself, since the primary text isn't available without a purchase. Treat the clause numbers below as indicative, not as verified quotations: clause 6.1 (risk assessment) and 8.2 (AI system impact assessment) — *an attempt:* the Drift Class catalog plus Example A's testing discipline. Clause 9.1 (monitoring) and 9.3 (management review) — *an attempt:* Example D plus the enforcement record and `VerbaCertificate` (Artifacts 1, 3, 4).
 
 ### OWASP Top 10 for LLM Applications (2025 — a distinct document from the Agentic Top 10)
 

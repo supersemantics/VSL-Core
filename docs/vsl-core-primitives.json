@@ -17,13 +17,13 @@
         {"name": "name", "type": "str", "required": true},
         {"name": "description", "type": "str", "required": true},
         {"name": "monitor", "type": "DriftMonitor (async callable: candidate_input -> GammaEstimate)", "required": true},
-        {"name": "assurance_basis", "type": "AssuranceBasis", "required": true},
+        {"name": "assurance_basis", "deprecated": true, "note": "ignored since 0.4.0 -- passing it raises FutureWarning and changes nothing. Do not pass it."},
         {"name": "gamma_threshold", "type": "float", "default": 1.1},
         {"name": "intervention", "type": "FormationLayerIntervention | None", "default": null},
         {"name": "fallback", "type": "Fallback", "default": "Fallback()"}
       ],
       "derived_properties": [
-        {"name": "assurance_level", "type": "AssuranceLevel", "note": "read-only, derived from assurance_basis.derived_level -- cannot be set directly"}
+        {"name": "assurance_level", "deprecated": true, "note": "removed in 1.0 -- returns None unless a deprecated assurance_basis was passed. Use VerbaLedger.enforcement(decision_id)."}
       ]
     },
     {
@@ -35,13 +35,13 @@
         {"name": "name", "type": "str", "required": true},
         {"name": "description", "type": "str", "required": true},
         {"name": "rule", "type": "Callable[[Any], Awaitable[bool]]", "required": true},
-        {"name": "assurance_basis", "type": "AssuranceBasis", "required": true},
+        {"name": "assurance_basis", "deprecated": true, "note": "ignored since 0.4.0 -- passing it raises FutureWarning and changes nothing. Do not pass it."},
         {"name": "scope", "type": "str", "default": "ALL_STATES"},
         {"name": "cannot_be_bypassed", "type": "bool", "default": true},
         {"name": "on_violation", "type": "TerminalState | None", "default": null, "note": "names which TerminalState a violation transitions into"}
       ],
       "derived_properties": [
-        {"name": "assurance_level", "type": "AssuranceLevel", "note": "read-only, derived from assurance_basis.derived_level"}
+        {"name": "assurance_level", "deprecated": true, "note": "removed in 1.0 -- use VerbaLedger.enforcement(decision_id)."}
       ]
     },
     {
@@ -77,12 +77,12 @@
       "fields": [
         {"name": "name", "type": "str", "required": true},
         {"name": "description", "type": "str", "required": true},
-        {"name": "assurance_basis", "type": "AssuranceBasis", "required": true},
+        {"name": "assurance_basis", "deprecated": true, "note": "ignored since 0.4.0 -- passing it raises FutureWarning and changes nothing. Do not pass it."},
         {"name": "measurement", "type": "str", "required": true},
         {"name": "validity_conditions", "type": "tuple[str, ...]", "default": "()"}
       ],
       "derived_properties": [
-        {"name": "assurance_level", "type": "AssuranceLevel"}
+        {"name": "assurance_level", "deprecated": true, "note": "removed in 1.0"}
       ]
     },
     {
@@ -259,6 +259,9 @@
         {"name": "write_monitor(*, identity_key, drift_detected, cluster_key=None, instance_id=None, decision_id=None, caused_by=None, extra_payload=None)", "returns": "LedgerEntry"},
         {"name": "write_verification(*, identity_key, result: VerificationResult, cluster_key=None, instance_id=None, decision_id=None, caused_by=None, extra_payload=None)", "returns": "LedgerEntry"},
         {"name": "write_gate_decision(*, identity_key, primitive_name, allowed=None, estimate=None, gamma_threshold=None, cluster_key=None, instance_id=None, decision_id=None, caused_by=None, extra_payload=None)", "returns": "LedgerEntry", "note": "standard MONITOR record of one gate decision: primitive_name, allowed, rules_version, drift_detected, plus gamma_hat/delta_estimation_error/robust_gamma/gamma_threshold/required_gamma_hat for a PreNode"},
+        {"name": "write_action(*, identity_key, action_name, decision_id, cluster_key=None, instance_id=None, caused_by=None, extra_payload=None)", "returns": "LedgerEntry", "note": "MONITOR record that the guarded action ran: payload action={name}, drift_detected False. Write it after the action, under the decision's decision_id."},
+        {"name": "enforcement(decision_id, *, primitive_name=None)", "returns": "Enforcement", "note": "BEFORE_ACTION / AFTER_ACTION / NOT_OBSERVED, from the order of the decision's gate and action records"},
+        {"name": "enforcement_by_decision()", "returns": "dict[str, Enforcement]", "note": "enforcement() for every decision_id with a gate or action record"},
         {"name": "verify_integrity()", "returns": "bool", "note": "never raises -- recomputes every entry's hash and chain pointer"},
         {"name": "audit(*, max_monitor_gap_seconds=None)", "returns": "LedgerAuditReport", "note": "5 named checks; checks 2-5 match causally via caused_by when set, else fall back to identity/instance/timestamp heuristic"},
         {"name": "issue_certificate(*, max_monitor_gap_seconds=None)", "returns": "VerbaCertificate | None", "note": "returns None if any audit check fails -- never fabricates"},
@@ -271,21 +274,10 @@
         "Hash-chaining is tamper-evidence, not cryptographic signing -- it proves an entry wasn't altered after being written, not who wrote it or that the chain wasn't truncated/replaced wholesale. current_checkpoint() is the seam for adding external protection, not the protection itself."
       ]
     },
-    {
-      "name": "AssuranceBasis",
-      "module": "vsl_core.metrics",
-      "kind": "dataclass (frozen)",
-      "purpose": "The F1/F2 facts an AssuranceLevel is derived from. Required on PreNode/Invariant/AllowedState -- assurance_level can never be set directly.",
-      "fields": [
-        {"name": "f1_pre_commitment", "type": "bool", "required": true, "note": "does the check run before the action commits?"},
-        {"name": "f2_modification", "type": "F2Modification", "required": true, "note": "judged at the call the gate guards: FULL = the app modifies the model itself (logits/activations/weights; impossible behind a hosted API); PARTIAL = the app shapes what the model sees (its own system prompt, RAG, redaction); INDIRECT = sampling only (temperature); NONE = the gate only allows or blocks and nothing is shaped, or no model is involved. Deciding whether an action happens is F1, never F2."}
-      ],
-      "derived_properties": [
-        {"name": "derived_level", "type": "AssuranceLevel", "table": "F1=False -> LOW (any F2). F1=True + FULL -> HIGH. F1=True + PARTIAL/INDIRECT -> MEDIUM. F1=True + NONE -> LOW."}
-      ]
-    },
-    {"name": "F2Modification", "module": "vsl_core.metrics", "kind": "enum", "values": ["FULL", "PARTIAL", "INDIRECT", "NONE"]},
-    {"name": "AssuranceLevel", "module": "vsl_core.metrics", "kind": "enum", "values": ["HIGH", "MEDIUM", "LOW"]},
+    {"name": "AssuranceBasis", "module": "vsl_core.metrics", "kind": "dataclass (frozen)", "deprecated": true, "purpose": "Removed in 1.0. Constructs no longer take it; passing it raises FutureWarning and changes nothing. Do not use it in new code."},
+    {"name": "F2Modification", "module": "vsl_core.metrics", "kind": "enum", "deprecated": true, "purpose": "Removed in 1.0. Has no effect. Do not use it in new code."},
+    {"name": "AssuranceLevel", "module": "vsl_core.metrics", "kind": "enum", "deprecated": true, "purpose": "Removed in 1.0. vsl-core no longer reports an assurance level; see Enforcement."},
+    {"name": "Enforcement", "module": "vsl_core.ledger", "kind": "enum", "values": ["BEFORE_ACTION", "AFTER_ACTION", "NOT_OBSERVED"], "purpose": "Whether a decision's gates held before its action, computed by VerbaLedger.enforcement() from the order of the decision's write_gate_decision() and write_action() records. Never declared. BEFORE_ACTION: every action came after an allowing decision from each gate recorded before it, or the gate denied and no action followed. AFTER_ACTION: an action was recorded with no gate decision before it, or after a deny. NOT_OBSERVED: no action record to compare with, or no gate record at all."},
     {"name": "VerificationResult", "module": "vsl_core.ledger", "kind": "enum", "values": ["SUFFICIENT", "INSUFFICIENT"]},
     {
       "name": "GammaEstimate",
@@ -361,12 +353,12 @@
     {
       "id": "A",
       "name": "Gate a high-impact action before it runs",
-      "code": "from vsl_core.constructs import PreNode, Fallback\nfrom vsl_core.metrics import AssuranceBasis, F2Modification, GammaEstimate\n\nALLOWED_TOOLS = {\"lookup_order\", \"issue_refund_under_50\"}\n\nasync def within_declared_scope(candidate_action) -> GammaEstimate:\n    ok = candidate_action.tool_name in ALLOWED_TOOLS\n    return GammaEstimate(gamma_hat=2.0 if ok else 0.1)  # pass/fail encoding, not a measured Gamma\n\ntool_call_gate = PreNode(\n    name=\"tool_call_gate\",\n    description=\"A tool call only proceeds if it's within this agent's declared scope\",\n    monitor=within_declared_scope,\n    # Runs before the tool call (F1); only allows or blocks it (F2 NONE).\n    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),\n    fallback=Fallback(max_retries=1, on_max_retries=\"AUTOMATION_DENIED\"),\n)"
+      "code": "from vsl_core.constructs import PreNode, Fallback\nfrom vsl_core.metrics import GammaEstimate\n\nALLOWED_TOOLS = {\"lookup_order\", \"issue_refund_under_50\"}\n\nasync def within_declared_scope(candidate_action) -> GammaEstimate:\n    ok = candidate_action.tool_name in ALLOWED_TOOLS\n    return GammaEstimate(gamma_hat=2.0 if ok else 0.1)  # pass/fail encoding, not a measured Gamma\n\ntool_call_gate = PreNode(\n    name=\"tool_call_gate\",\n    description=\"A tool call only proceeds if it's within this agent's declared scope\",\n    monitor=within_declared_scope,\n    fallback=Fallback(max_retries=1, on_max_retries=\"AUTOMATION_DENIED\"),\n)"
     },
     {
       "id": "B",
       "name": "A hard rule that can't be bypassed, with an escalation path",
-      "code": "from vsl_core.constructs import Invariant, TerminalState\nfrom vsl_core.metrics import AssuranceBasis, F2Modification\n\ngovernance_halt = TerminalState(\n    name=\"governance_halt\",\n    description=\"Halts pending human review after a hard rule is violated\",\n    entry_conditions=(\"invariant_violated\",),\n)\n\nasync def payment_is_verified(candidate) -> bool:\n    return candidate.customer.payment_verified is True\n\npayment_required = Invariant(\n    name=\"payment_required\",\n    description=\"Never confirm a booking without a verified payment method\",\n    rule=payment_is_verified,\n    # Runs before the booking is confirmed (F1); only allows or blocks it (F2 NONE).\n    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),\n    on_violation=governance_halt,\n)"
+      "code": "from vsl_core.constructs import Invariant, TerminalState\n\ngovernance_halt = TerminalState(\n    name=\"governance_halt\",\n    description=\"Halts pending human review after a hard rule is violated\",\n    entry_conditions=(\"invariant_violated\",),\n)\n\nasync def payment_is_verified(candidate) -> bool:\n    return candidate.customer.payment_verified is True\n\npayment_required = Invariant(\n    name=\"payment_required\",\n    description=\"Never confirm a booking without a verified payment method\",\n    rule=payment_is_verified,\n    on_violation=governance_halt,\n)"
     },
     {
       "id": "C",
@@ -391,7 +383,7 @@
       "2. Construct PreNode/Invariant/TerminalState/Cluster objects -- pure data plus callables, nothing is live yet.",
       "3. Compile them into callable gates via an adapter conforming to VSLAdapter (PlainPythonReferenceAdapter unless a specific framework adapter is named).",
       "4. Call the compiled gate immediately before the real action. It raises on failure, returns normally on pass.",
-      "5. Write what happened to a VerbaLedger (write_monitor/write_verification/write) -- this is never automatic.",
+      "5. Write what happened to a VerbaLedger (write_gate_decision for each gate decision, write_action after the real action runs, write_verification/write on denials) -- this is never automatic. VerbaLedger.enforcement(decision_id) then reads whether the gate held before the action.",
       "6. Periodically call audit()/issue_certificate() for a compliance-shaped report.",
       "7. If a TerminalState/Invariant.on_violation fires, the only sanctioned way back is governance.request_re_enablement()."
     ],
@@ -417,7 +409,7 @@
     "files": [
       {"file": "domain.py", "contains": "Plain dataclasses modeling the domain's entities and their states (e.g. Customer, Order, ProviderStatus)."},
       {"file": "tools.py", "contains": "The actual functions that perform side-effecting actions -- the 'controlled tools' this domain needs (e.g. issue_refund, send_email, book_appointment)."},
-      {"file": "governance.py", "contains": "Constructs the PreNode/Invariant/TerminalState/InadmissibleState/Cluster objects for this domain, one per decision point identified via decision_heuristic. This is where AssuranceBasis is justified for each construct -- not defaulted."},
+      {"file": "governance.py", "contains": "Constructs the PreNode/Invariant/TerminalState/InadmissibleState/Cluster objects for this domain, one per decision point identified via decision_heuristic."},
       {"file": "agent.py", "contains": "Orchestrates the flow: decide what to do -> compile gates via an adapter -> call gates before each tools.py action -> write ledger entries -> catch exceptions and handle TerminalState/re-enablement."},
       {"file": "tests/", "contains": "Prove the governance shape: each PreNode/Invariant actually blocks the case it should and passes the case it shouldn't, using PlainPythonReferenceAdapter directly."}
     ],
@@ -426,7 +418,7 @@
       "List the domain's key actions and classify each via decision_heuristic.signals.",
       "Write domain.py.",
       "Write tools.py.",
-      "Write governance.py, justifying each AssuranceBasis with real F1/F2 facts, not a default HIGH.",
+      "Write governance.py. Constructs take no assurance claim: do not pass assurance_basis.",
       "Write agent.py wiring PlainPythonReferenceAdapter (or a named framework adapter) + VerbaLedger + explicit exception handling per lifecycle.automatic_vs_manual.",
       "Write tests proving each gate blocks/passes correctly.",
       "State plainly which of this document's canonical_patterns each part of the generated code corresponds to, so the developer can verify it against this reference."
@@ -434,15 +426,14 @@
   },
 
   "common_mistakes": [
-    "Setting assurance_level directly instead of deriving it from AssuranceBasis -- raises TypeError, it's a read-only property.",
+    "Passing assurance_basis=AssuranceBasis(...) to a PreNode/Invariant/AllowedState -- deprecated since 0.4.0: it raises FutureWarning and changes nothing. Delete the argument.",
     "Assuming a TerminalState or ledger write happens automatically when a gate raises -- it doesn't; the calling code must catch the exception and write the entry itself.",
     "Reusing one Instance across multiple concurrent decisions without decision_id/caused_by -- can make audit() mismatch an unrelated entry as resolving the wrong one.",
     "Treating the Drift Class catalog (vsl_core.catalog) as an active scanner -- it's a reference taxonomy a monitor/rule function can consult, not executable detection logic on its own.",
     "Calling Instance._re_enable() directly instead of governance.request_re_enablement() -- bypasses the authority/evidence audit trail.",
     "Distinguishing a plain InvariantViolation from one that also entered a TerminalState by parsing the reason string instead of checking the exception's terminal_state_name field directly.",
     "Describing VerbaLedger's hash chain as a cryptographic signature or proof of non-repudiation -- it's tamper-evidence (detects change after the fact), not identity-bound signing.",
-    "Claiming HIGH assurance for a gate in front of a hosted API -- the app can only shape the prompt/context there, which caps at MEDIUM (F1=True, F2=PARTIAL).",
-    "Declaring F2=FULL because the gate decides whether the action happens -- that is F1. A gate that only allows or blocks, with nothing shaped at the guarded call, is F2=NONE (LOW). LOW describes influence on the model, not enforcement.",
+    "Recording gate decisions but never the action -- enforcement() then reads NOT_OBSERVED for every allowed decision. Call write_action() after the action runs, under the same decision_id.",
     "Using a raw 0-1 confidence as gamma_hat -- it can never exceed the 1.1 threshold, so the gate denies every time. Build gamma_hat as a ratio where 1.0 means break-even."
   ]
 }

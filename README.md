@@ -33,12 +33,11 @@ Your agent has a tool, say `issue_refund`. You want a rule checked **before** th
 call stopped if the rule fails. That check is a gate:
 
 ```python
-from vsl_core import AssuranceBasis, F2Modification, Invariant, InvariantViolation
+from vsl_core import Invariant, InvariantViolation
 from vsl_core.conformance.reference_adapter import PlainPythonReferenceAdapter
 
 async def within_cap(args): return args["amount"] <= 500
-cap = Invariant(name="refund-cap", description="Refunds of $500 or less.", rule=within_cap,
-                assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE))
+cap = Invariant(name="refund-cap", description="Refunds of $500 or less.", rule=within_cap)
 gate = PlainPythonReferenceAdapter().compile_invariant(cap)
 
 async def refund(args):
@@ -49,10 +48,7 @@ async def refund(args):
 What each line does:
 
 - `within_cap` is the rule: plain code that answers yes or no for this one call.
-- `Invariant` gives the rule a name and says how strong the check is. It runs before the action
-  (`f1_pre_commitment=True`) and changes nothing about what a model produces (`F2Modification.NONE`).
-  That makes its assurance level LOW: it blocks, but it doesn't steer a model. See
-  [F1/F2](#the-f1f2-assurance-distinction-read-this-before-trusting-any-assurance-level) below.
+- `Invariant` gives the rule a name and a description. That's all it needs.
 - `compile_invariant` turns the rule into a gate: an async function that returns when the rule holds
   and raises when it doesn't. `PlainPythonReferenceAdapter` is the adapter for plain Python, with no
   agent framework underneath.
@@ -64,7 +60,8 @@ violated") and no refund is issued. The whole file, ready to run, is
 
 **Keep a record of each decision.** The gate blocks on its own, but writes nothing down (see
 [The ledger doesn't write itself](#the-ledger-doesnt-write-itself-read-this-before-assuming-an-audit-trail-exists)).
-To keep a hash-chained record of every allow and deny, write it from the rule:
+To keep a hash-chained record of every allow and deny, write it from the rule, and record the action
+when it runs:
 
 ```python
 from vsl_core import VerbaLedger
@@ -73,11 +70,21 @@ ledger = VerbaLedger()   # in memory; VerbaLedger(JsonlLedgerStore("decisions.js
 
 async def within_cap(args):
     allowed = args["amount"] <= 500
-    ledger.write_gate_decision(identity_key="refund-agent", primitive_name="refund-cap", allowed=allowed)
+    ledger.write_gate_decision(identity_key="refund-agent", primitive_name="refund-cap",
+                               allowed=allowed, decision_id=args["order_id"])
     return allowed
+
+async def refund(args):
+    await gate(args)
+    result = issue_refund(**args)
+    ledger.write_action(identity_key="refund-agent", action_name="issue_refund",
+                        decision_id=args["order_id"])
+    return result
 ```
 
-`ledger.verify_integrity()` returns `True` while no entry has been changed.
+`ledger.verify_integrity()` returns `True` while no entry has been changed. After a $120 refund on
+order `A100`, `ledger.enforcement("A100")` returns `Enforcement.BEFORE_ACTION`: the gate's record
+came before the refund's. See [What a gate reports](#what-a-gate-reports).
 
 **Using an agent framework?** The adapters compile the same `Invariant` into the framework's own hook:
 [`vsl-langgraph`](https://github.com/supersemantics/VSL-Langgraph) (LangGraph),
@@ -96,46 +103,26 @@ Stuck on a specific error, not just getting started? [`docs/troubleshooting.md`]
 
 If you're asking "how does this relate to the OWASP Agentic Top 10, NIST's AI RMF, the EU AI Act, ISO 42001, or similar" — see [`docs/governance-frameworks.md`](https://github.com/supersemantics/VSL-Core/blob/HEAD/docs/governance-frameworks.md). It does not claim vsl-core satisfies, maps to, or complies with any of them. What it does instead: framework by framework, it takes each one's own stated goal in its own words and shows one way a developer might attempt to address it using vsl-core's real primitives — runnable code, actual output, and an honest "we don't attempt this" wherever vsl-core has nothing relevant to offer. Whether a given implementation built this way actually satisfies a given framework, for a real deployment, is a question for a qualified auditor or compliance professional, not something this package or that document can settle in advance.
 
-## The F1/F2 assurance distinction (read this before trusting any Assurance Level)
+## What a gate reports
 
-Every claim this package (or anything built on it) makes about how trustworthy a governance mechanism is reduces to one test:
+For each decision, the ledger shows whether its gate ran before the action it guards:
 
-- **F1 (pre-commitment)** — does the check run *before* the system commits to an action, with no side effect yet fired?
-- **F2 (energy-landscape modification)** — how much does the system change what the model produces? It is judged at the call the gate guards: does the application touch the mechanism that produces the output (logits, weights, activations), only what the model sees (prompt, context) or how it samples, or nothing at all?
+| `Enforcement` | What the ledger shows |
+|---|---|
+| `BEFORE_ACTION` | Every recorded action came after an allowing decision from each gate recorded before it, or the gate denied and no action followed |
+| `AFTER_ACTION` | An action was recorded with no gate decision before it, or after a deny. The gate did not hold it |
+| `NOT_OBSERVED` | The ledger can't tell: no action record to compare with, or no gate record at all |
 
-F2 is never earned by the gate itself. Allowing or blocking an action changes nothing about what a model produces, so a gate that only allows or blocks — and an application that shapes nothing at the guarded call — is `NONE`.
+It is computed, not declared. `ledger.enforcement(decision_id)` reads the order of the decision's
+`write_gate_decision()` and `write_action()` records, and `ledger.enforcement_by_decision()` does
+it for every decision. A gate that runs after the action, or only logs, reads `AFTER_ACTION`
+however it is configured.
 
-| Gate pattern | F1 | F2 | Level |
-|---|---|---|---|
-| Amount cap before `issue_refund` (no model involved) | True | `NONE` | LOW |
-| Gate before a hosted-model call whose system prompt the application writes | True | `PARTIAL` | MEDIUM |
-| Gate before a self-hosted model call where the application steers logits or activations (`PreNode.intervention`) | True | `FULL` | HIGH |
-| A check that runs after the action has already happened, or only logs | False | any | LOW |
+vsl-core does not calculate F2. F2 can't be declared: it has to be measured from how the model behaves at the guarded call. That measurement is part of Super Semantics' paid offering.
 
-A mechanism satisfying F1 but only *partial* F2 caps at **MEDIUM** assurance, never HIGH. A hosted model API rules out `FULL`: nobody outside the provider can touch its logits or weights, so a gate in front of one is at most `PARTIAL`, and only because of the prompt or context the application itself sends. Nothing in this package, in any README, or in any client-facing material built on it should blur this distinction.
-
-**The level measures influence on the model, not enforcement.** A gate with F1=True and F2=`NONE` derives `LOW`, yet it still blocks every action it denies — that is its F1. Report the two separately ("blocks before the action: yes; shapes the model: no") rather than reading enforcement off the level, and never raise F2 to make a level look better.
-
-**Stating a basis is structurally enforced; the basis being true is not.** `AllowedState.assurance_level`/`PreNode.assurance_level`/`Invariant.assurance_level` are *derived*, read-only properties — you can't set them directly, and you can't skip past `AssuranceBasis` to assert a level for free. What you provide instead is an `AssuranceBasis`: the F1 (bool) and F2 (`F2Modification`: `FULL`/`PARTIAL`/`INDIRECT`/`NONE`) facts themselves. `AssuranceBasis.derived_level` computes the level from those facts, so a `PreNode` claiming HIGH has to actually state "yes F1, and F2 is FULL" — it can't just default into HIGH. `AssuranceBasis.__post_init__` also rejects any `f1_pre_commitment` that isn't a strict `bool` and any `f2_modification` that isn't a real `F2Modification` member — `f1_pre_commitment=None`, `f2_modification=None`, a typo, or any other invalid value raises `TypeError` immediately, rather than silently deriving `LOW` by falling through `derived_level` unnoticed (`f1_pre_commitment=None` is falsy, so without this check it would quietly take the `not self.f1_pre_commitment` branch straight to `LOW`). This closes one specific failure mode — a value nobody actually chose being computed anyway — not the other one described below.
-
-```python
-from vsl_core.metrics import AssuranceBasis, F2Modification
-
-# A gate before a hosted-LLM call: runs before the call (F1=True); the app
-# sends its own system prompt there, so F2=PARTIAL. Nothing behind the API
-# can be touched, so FULL is impossible.
-basis = AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.PARTIAL)
-basis.derived_level  # AssuranceLevel.MEDIUM -- not HIGH, even if you wanted it to be
-
-# An amount cap before issue_refund: no model at the guarded call, so F2=NONE.
-AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE).derived_level  # LOW
-```
-
-**But stating F1/F2 is not the same as proving them.** `AssuranceBasis` is a self-declared claim, not independently verified assurance. Nothing in this package checks that a stated `F2Modification.FULL` actually reflects what the gated `monitor`/`rule` does — a developer can construct a perfectly valid `AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL)` next to a callable that only calls a hosted, black-box LLM API, and `vsl-core` will compute `HIGH` from it without objection. Confirming a stated F2 value is honest requires something external to this package — a human reviewing the actual `monitor`/`rule` code, or a dedicated tool built for that reconciliation. Presenting a derived `AssuranceLevel` to a compliance team, an auditor, or a client as though it were independently confirmed is not something this package does, checks, or claims: treat it as what a developer asserted, not what was proven.
-
-The full derivation table (`F1=False` always → LOW regardless of F2; `F1=True`+`FULL` → HIGH; `F1=True`+`PARTIAL`/`INDIRECT` → MEDIUM; `F1=True`+`NONE` → LOW) is implemented and tested exhaustively in `vsl_core.metrics`. The last row (F1 satisfied, but zero claimed energy-landscape effect) isn't in the source paper's table — it's a deliberate interpretive extension, documented as such in the code, not a spec fact.
-
-This is a distinct axis from **model-agnostic vs. model-specific** and **framework-agnostic vs. framework-specific** — see the module docstrings in `constructs.py` and `ledger.py` for why conflating those two axes was a real mistake worth avoiding structurally, not just documenting.
+**Upgrading from 0.3.x.** Constructs no longer take `assurance_basis`. Passing one raises a
+`FutureWarning` and changes nothing: delete the argument. `AssuranceBasis`, `F2Modification`,
+`AssuranceLevel` and the `assurance_level` properties still import, and are removed in 1.0.
 
 ## The ledger doesn't write itself (read this before assuming an audit trail exists)
 
@@ -172,12 +159,20 @@ refund_pre_node = PreNode(
     description="Refunds must stay comfortably inside the policy limit.",
     monitor=refund_headroom,
     gamma_threshold=ROBUST_GAMMA_DEFAULT_THRESHOLD,
-    assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE),
 )
 # For an Invariant, record inside its rule: write_gate_decision(..., allowed=holds).
 ```
 
-The record is a `MONITOR` entry carrying `primitive_name`, `allowed` (computed with the same `sufficient()` check the gate makes), `gamma_hat`, `delta_estimation_error`, `robust_gamma`, `gamma_threshold`, `required_gamma_hat`, `rules_version` and `drift_detected` (`not allowed`). `rules_version` is `ASSURANCE_RULES_VERSION`: if a later release changes how Gamma or assurance levels are judged, every record still says which rules produced it.
+The record is a `MONITOR` entry carrying `primitive_name`, `allowed` (computed with the same `sufficient()` check the gate makes), `gamma_hat`, `delta_estimation_error`, `robust_gamma`, `gamma_threshold`, `required_gamma_hat`, `rules_version` and `drift_detected` (`not allowed`). `rules_version` is `ASSURANCE_RULES_VERSION`: if a later release changes how Gamma is judged, every record still says which rules produced it.
+
+When the guarded action runs, record it with `write_action()` under the same `decision_id`, from the code path that performs it. Without action records, `enforcement()` can only say `NOT_OBSERVED` for an allowed decision (see [What a gate reports](#what-a-gate-reports)):
+
+```python
+ledger.write_action(identity_key="refund-agent", action_name="issue_refund",
+                    decision_id=request["decision_id"])
+```
+
+The action record is a `MONITOR` entry with `drift_detected` False and an `ACTION_KEY` (`"action"`) payload of `{name}`. Like the handover below, it needs no new entry type.
 
 When one agent hands part of a decision to another before that agent acts, record the hand-off with `write_handover()`, and have the receiver name it as `caused_by` on its first gate decision. Each agent's own gate can pass while the hand-off between them goes unchecked; this makes the decision trace one causal chain across both agents:
 
@@ -212,7 +207,7 @@ If you never call `ledger.write*` anywhere in your agent, you get real, working 
 | State / Allowed State | `vsl_core.constructs.AllowedState` |
 | Inadmissible State / Drift Node | `vsl_core.constructs.InadmissibleState` |
 | Pre-Node | `vsl_core.constructs.PreNode` |
-| Invariant | `vsl_core.constructs.Invariant` (requires `assurance_basis`, same as `PreNode`/`AllowedState`; optional `on_violation: TerminalState` names which Terminal State a violation enters) |
+| Invariant | `vsl_core.constructs.Invariant` (optional `on_violation: TerminalState` names which Terminal State a violation enters) |
 | Terminal State | `vsl_core.constructs.TerminalState` |
 | Cluster | `vsl_core.cluster.Cluster` |
 | Fallback | `vsl_core.constructs.Fallback` |
@@ -364,9 +359,9 @@ pip install -e .
 src/vsl_core/
 ├── exceptions.py       exception hierarchy
 ├── rules_version.py    ASSURANCE_RULES_VERSION (written into every gate-decision record)
-├── metrics.py          Delta, Gamma, GES, EEF, Beta, Threshold, AssuranceBasis
+├── metrics.py          Delta, Gamma, GES, EEF, Beta, Threshold
 ├── identity.py         IdentityKey, ClusterKey, Instance, Evidence
-├── ledger.py           VerbaLedger, hash-chained LedgerEntry, gate-decision records, causal audit checks, checkpoints
+├── ledger.py           VerbaLedger, hash-chained LedgerEntry, gate-decision and action records, enforcement, causal audit checks, checkpoints
 ├── immudb_store.py     optional ImmuDBLedgerStore (JSONL plus verified immudb replication)
 ├── constructs.py       AllowedState, PreNode, Invariant, TerminalState
 ├── cluster.py          Cluster, ClusterPreNode

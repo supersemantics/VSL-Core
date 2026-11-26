@@ -1,8 +1,10 @@
 """The version of the assurance rules this package applies.
 
 "Assurance rules" means the decisions vsl-core makes on a caller's behalf:
-how GammaEstimate.sufficient() judges a Gamma estimate against a threshold,
-and how AssuranceBasis.derived_level turns F1/F2 into an AssuranceLevel.
+how GammaEstimate.sufficient() judges a Gamma estimate against a threshold.
+(Until 0.4.0 it also covered AssuranceBasis.derived_level; vsl-core no
+longer derives an assurance level. The Gamma rule is unchanged, so the
+version is too.)
 
 The version is written into every gate-decision ledger record
 (VerbaLedger.write_gate_decision), so a record can always be read under the

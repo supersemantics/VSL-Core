@@ -2,6 +2,43 @@
 
 What changed in each release, and why. Newest first.
 
+## 0.4.0 (unreleased): enforcement is computed, not declared
+
+### Changed: constructs no longer take an assurance claim
+
+**Before:** `PreNode`, `Invariant` and `AllowedState` required
+`assurance_basis=AssuranceBasis(f1_pre_commitment=..., f2_modification=...)`, and derived a
+HIGH/MEDIUM/LOW `assurance_level` from it. Developers had to pick an F2 value, and nothing could check
+the value they picked.
+
+**After:** constructs need only their name, description and rule or monitor. `assurance_basis` is
+optional and ignored: passing one raises a `FutureWarning` and changes nothing. `assurance_level`
+still exists, warns, and returns `None` unless a basis was passed. `AssuranceBasis`,
+`F2Modification` and `AssuranceLevel` still import. All of these are removed in 1.0. Positional
+arguments are unchanged for `PreNode` and `Invariant`; on `AllowedState`, `assurance_basis` became
+keyword-only, so `measurement` no longer follows it.
+
+**Compatibility:** adapters released before 0.4.0 read `construct.assurance_basis.f2_modification`.
+A construct built without a basis holds a placeholder, so those reads keep working and never look
+like a FULL claim. The conformance suite no longer passes a basis.
+
+### Added: action records and `enforcement()`
+
+`VerbaLedger.write_action(identity_key=..., action_name=..., decision_id=...)` records that a guarded
+action ran: a MONITOR entry (`drift_detected` False) with an `ACTION_KEY` (`"action"`) payload of
+`{name}`. `VerbaLedger.enforcement(decision_id)` compares the decision's gate records with its action
+records and returns an `Enforcement`: `BEFORE_ACTION`, `AFTER_ACTION` or `NOT_OBSERVED`.
+`enforcement_by_decision()` does it for every decision. No new entry type: every ledger store
+accepts the records as is. `audit()` keeps its five checks, so certificates are unchanged.
+
+**Why:** a declared level said what the developer believed, not what happened. Whether a gate ran
+before its action is a fact the ledger can show, so vsl-core now computes it from the records.
+vsl-core does not calculate F2: it can't be declared, only measured from how the model behaves at
+the guarded call. The README, guide, troubleshooting, governance-frameworks doc and
+`vsl-core-primitives.json` no longer ask anyone to declare it.
+
+The assurance rules version stays `2026.10`: the Gamma rule it covers is unchanged.
+
 ## 0.3.2 (2026-11-14, tag `v0.3.2`): quickstart, gate a tool call in 5 lines
 
 The code is unchanged from 0.3.1.

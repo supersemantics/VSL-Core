@@ -7,9 +7,7 @@ from vsl_core.conformance.reference_adapter import PlainPythonReferenceAdapter
 from vsl_core.conformance.suite import run_conformance_suite
 from vsl_core.constructs import Invariant, PreNode, TerminalState
 from vsl_core.exceptions import AutomationDeniedException, ConformanceError, InvariantViolation
-from vsl_core.metrics import AssuranceBasis, F2Modification, GammaEstimate
-
-_HIGH_ASSURANCE_BASIS = AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL)
+from vsl_core.metrics import GammaEstimate
 
 
 def test_reference_adapter_passes_full_conformance_suite():
@@ -31,7 +29,6 @@ def test_reference_adapter_pre_node_blocks_before_side_effect_mechanically():
         name="test-blocking",
         description="d",
         monitor=insufficient_monitor,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
         gamma_threshold=1.1,
     )
     adapter = PlainPythonReferenceAdapter()
@@ -52,7 +49,7 @@ def test_reference_adapter_invariant_violation_is_specific_type():
     async def failing_rule(_candidate_input):
         return False
 
-    invariant = Invariant(name="test-invariant", description="d", rule=failing_rule, assurance_basis=_HIGH_ASSURANCE_BASIS)
+    invariant = Invariant(name="test-invariant", description="d", rule=failing_rule)
     adapter = PlainPythonReferenceAdapter()
     gate = adapter.compile_invariant(invariant)
 
@@ -71,7 +68,6 @@ def test_reference_adapter_gate_reusable_no_state_leak():
         name="test-reusable",
         description="d",
         monitor=conditional_monitor,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
         gamma_threshold=1.1,
     )
     adapter = PlainPythonReferenceAdapter()
@@ -127,7 +123,6 @@ def test_reference_adapter_invariant_reason_includes_terminal_state_when_set():
         name="test-invariant-linked",
         description="d",
         rule=failing_rule,
-        assurance_basis=_HIGH_ASSURANCE_BASIS,
         on_violation=terminal,
     )
     adapter = PlainPythonReferenceAdapter()
@@ -148,7 +143,7 @@ def test_reference_adapter_invariant_reason_unchanged_when_on_violation_unset():
     async def failing_rule(_candidate_input):
         return False
 
-    invariant = Invariant(name="test-invariant-unlinked", description="d", rule=failing_rule, assurance_basis=_HIGH_ASSURANCE_BASIS)
+    invariant = Invariant(name="test-invariant-unlinked", description="d", rule=failing_rule)
     adapter = PlainPythonReferenceAdapter()
     gate = adapter.compile_invariant(invariant)
 

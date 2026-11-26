@@ -1,11 +1,11 @@
 # Troubleshooting
 
-Every entry below was actually triggered against the real, installed `vsl-core` — not reasoned about from reading the code. This is the human-readable counterpart to [`vsl-core-primitives.json`](vsl-core-primitives.json)'s `common_mistakes` array, which is written for an AI coding assistant to consume, not for browsing on GitHub. One correction surfaced in the process: the JSON's entry for mistake A claims setting `assurance_level` raises `TypeError` — the real, reproduced exception is `FrozenInstanceError` (below).
+Every entry below was actually triggered against the real, installed `vsl-core` — not reasoned about from reading the code. This is the human-readable counterpart to [`vsl-core-primitives.json`](vsl-core-primitives.json)'s `common_mistakes` array, which is written for an AI coding assistant to consume, not for browsing on GitHub.
 
 | Symptom | Jump to |
 |---|---|
-| `FrozenInstanceError` setting `assurance_level` | [A](#a-setting-assurance_level-directly) |
-| `AssuranceBasis.derived_level` won't go above `MEDIUM` no matter what you set `f2_modification` to try to force it | [B](#b-f2partial-caps-at-medium-cannot-be-forced-to-high) |
+| `FutureWarning: assurance_basis is no longer used` | [A](#a-futurewarning-assurance_basis-is-no-longer-used) |
+| `enforcement()` says `NOT_OBSERVED` for a gate that allowed | [B](#b-enforcement-says-not_observed-for-a-gate-that-allowed) |
 | A gate raised, but no `TerminalState`/ledger entry exists anywhere | [C](#c-a-terminalstateledger-write-does-not-happen-automatically) |
 | `audit()` reports a check passed, but it matched the wrong entry | [D](#d-omitting-caused_by-lets-audit-correlate-the-wrong-entry) |
 | Recovering whether a violation also halted the system by parsing `reason` text | [E](#e-terminal_state_name-is-a-direct-field) |
@@ -14,44 +14,43 @@ Every entry below was actually triggered against the real, installed `vsl-core` 
 
 ---
 
-## A: setting `assurance_level` directly
+## A: `FutureWarning: assurance_basis is no longer used`
 
 **Symptom:**
 ```
-FrozenInstanceError: cannot assign to field 'assurance_level'
+FutureWarning: assurance_basis is no longer used; enforcement is computed from the ledger (VerbaLedger.enforcement). Remove it; it will be rejected in 1.0.
 ```
 
-**Cause:** `assurance_level` is a read-only `@property`, derived from `assurance_basis.derived_level` — it exists so a `PreNode`/`Invariant`/`AllowedState` can't claim a trust level without stating the F1/F2 facts that justify it. But the class itself is also a frozen dataclass, and Python's frozen-dataclass `__setattr__` override intercepts the assignment before it would even get to the "this is a property with no setter" complaint — so the actual exception is `dataclasses.FrozenInstanceError`, not the `TypeError` a plain read-only property would normally raise.
+**Cause:** code written for vsl-core 0.3.x passes `assurance_basis=AssuranceBasis(...)` to a `PreNode`, `Invariant` or `AllowedState`. Since 0.4.0 constructs take no assurance claim: the argument is accepted, ignored, and warned about.
 
-**Fix:** don't. Set `assurance_basis` at construction time with real F1/F2 facts; `assurance_level` follows automatically.
+**Fix:** delete the `assurance_basis=` argument and the `AssuranceBasis`/`F2Modification` imports. Nothing else changes: the gate compiles and blocks exactly as before. Whether it held before the action is read from the ledger (see B).
 
 **Reproduced:**
 ```python
 pn = PreNode(name="p", description="x", monitor=..., assurance_basis=BASIS)
-pn.assurance_level = "HIGH"
 ```
 ```
-FrozenInstanceError: cannot assign to field 'assurance_level'
+FutureWarning: assurance_basis is no longer used; enforcement is computed from the ledger (VerbaLedger.enforcement). Remove it; it will be rejected in 1.0.
 ```
 
 ---
 
-## B: F2=PARTIAL caps at MEDIUM, cannot be forced to HIGH
+## B: `enforcement()` says `NOT_OBSERVED` for a gate that allowed
 
-**Symptom:** `AssuranceBasis.derived_level` returns `MEDIUM` even though you believe the mechanism deserves `HIGH`.
+**Symptom:** `ledger.enforcement(decision_id)` returns `Enforcement.NOT_OBSERVED` although the gate's decision is in the ledger.
 
-**Cause:** this is the F1/F2 table working as designed, not a bug — `F1=True` + `F2Modification.PARTIAL` is structurally capped at `MEDIUM`. The canonical case: a gate before a hosted LLM call satisfies F1 (it runs before the call), and the application's own system prompt or context makes it `PARTIAL`. Nothing behind the API can be touched, so it is never `FULL`, no matter how confident you are in the check.
+**Cause:** the ledger has the gate's allow but no record of the action. It can't tell whether the action ran after the gate, before it, or at all, so it doesn't guess.
 
-**Fix:** if the application only shapes the prompt or context at the guarded call, its ceiling is `MEDIUM` — that's accurate, not a shortfall to work around. `HIGH` requires the application to actually modify the mechanism producing the output (`F2Modification.FULL`): logit adjustment, activation steering, fine-tuning, constitutional training — which needs a model whose internals you control.
-
-**The opposite mistake is more common:** declaring `FULL` because "the gate decides whether the action happens at all". Deciding whether an action happens is F1, not F2. A gate that only allows or blocks, where the application shapes nothing at the guarded call (a refund cap, an email allow-list), is `F2Modification.NONE`, which derives `LOW`. That `LOW` describes influence on the model, not enforcement: the gate still blocks every action it denies.
+**Fix:** record the action with `write_action()` under the same `decision_id`, from the code that performs it, after it runs. A deny with no action after it needs nothing more: it already reads `BEFORE_ACTION`.
 
 **Reproduced:**
 ```python
-AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.PARTIAL).derived_level
-# AssuranceLevel.MEDIUM
-AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.FULL).derived_level
-# AssuranceLevel.HIGH
+ledger.write_gate_decision(identity_key="a", primitive_name="p", allowed=True, decision_id="d1")
+ledger.enforcement("d1")
+# Enforcement.NOT_OBSERVED
+ledger.write_action(identity_key="a", action_name="issue_refund", decision_id="d1")
+ledger.enforcement("d1")
+# Enforcement.BEFORE_ACTION
 ```
 
 ---
@@ -160,6 +159,6 @@ Nothing in `vsl-core` prevented the first call — same non-enforcement shape as
 
 ## Still stuck?
 
-- [`README.md`](../README.md) — construct-to-object mapping, the F1/F2 distinction, package layout.
+- [`README.md`](../README.md) — construct-to-object mapping, what a gate reports, package layout.
 - [`building-with-vsl-core.md`](building-with-vsl-core.md) — the decision heuristic, the five-step lifecycle, a full worked example.
 - [`vsl-core-primitives.json`](vsl-core-primitives.json) — exact, structured facts for every primitive; every code sample in it has been executed against the real package.

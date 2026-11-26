@@ -6,7 +6,7 @@
 
 import asyncio
 
-from vsl_core import AssuranceBasis, F2Modification, Invariant, InvariantViolation
+from vsl_core import Invariant, InvariantViolation
 from vsl_core.conformance.reference_adapter import PlainPythonReferenceAdapter
 
 
@@ -16,8 +16,7 @@ def issue_refund(order_id: str, amount: float) -> str:  # your existing tool, un
 
 # The 5 lines: a rule, the gate built from it, and a call to the gate before the tool runs.
 async def within_cap(args): return args["amount"] <= 500
-cap = Invariant(name="refund-cap", description="Refunds of $500 or less.", rule=within_cap,
-                assurance_basis=AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE))
+cap = Invariant(name="refund-cap", description="Refunds of $500 or less.", rule=within_cap)
 gate = PlainPythonReferenceAdapter().compile_invariant(cap)
 
 

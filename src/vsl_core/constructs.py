@@ -13,10 +13,42 @@ type) belongs in a separate `vsl-<framework>` package, never here.
 from __future__ import annotations
 
 import threading
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
-from .metrics import AssuranceBasis, AssuranceLevel, GammaEstimate, ROBUST_GAMMA_DEFAULT_THRESHOLD
+from .metrics import AssuranceBasis, AssuranceLevel, F2Modification, GammaEstimate, ROBUST_GAMMA_DEFAULT_THRESHOLD
+
+# Placeholder held by a construct whose caller did not pass assurance_basis
+# (the normal case from 0.4.0). It exists only so adapters released before
+# 0.4.0, which read `construct.assurance_basis.f2_modification`, keep
+# working against this release. It states nothing: assurance_level returns
+# None for it. Removed in 1.0 along with the field.
+_NOT_STATED = AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE)
+
+ASSURANCE_BASIS_DEPRECATION: str = (
+    "assurance_basis is no longer used; enforcement is computed from the ledger "
+    "(VerbaLedger.enforcement). Remove it; it will be rejected in 1.0."
+)
+
+
+def _warn_if_basis_passed(basis: AssuranceBasis) -> None:
+    # Called from a construct's __post_init__: this function, __post_init__
+    # and the generated __init__ sit between the warning and the caller.
+    if basis is not _NOT_STATED:
+        warnings.warn(ASSURANCE_BASIS_DEPRECATION, FutureWarning, stacklevel=4)
+
+
+def _deprecated_level(basis: AssuranceBasis) -> AssuranceLevel | None:
+    warnings.warn(
+        "assurance_level is deprecated and will be removed in 1.0; vsl-core no longer "
+        "reports an assurance level. Use VerbaLedger.enforcement(decision_id).",
+        FutureWarning,
+        stacklevel=3,
+    )
+    if basis is _NOT_STATED:
+        return None
+    return basis.derived_level
 
 
 @dataclass(frozen=True)
@@ -24,20 +56,22 @@ class AllowedState:
     """A state meeting all required prerequisites, Constraints, rules, and
     validity conditions.
 
-    assurance_level is not set directly -- it's required to be derived from
-    a real AssuranceBasis (F1/F2 facts), so a caller can't claim HIGH
-    without stating what makes it HIGH.
+    `assurance_basis` is deprecated and ignored (see Invariant).
     """
 
     name: str
     description: str
-    assurance_basis: AssuranceBasis
     measurement: str
     validity_conditions: tuple[str, ...] = ()
+    assurance_basis: AssuranceBasis = field(default=_NOT_STATED, kw_only=True)
+
+    def __post_init__(self) -> None:
+        _warn_if_basis_passed(self.assurance_basis)
 
     @property
-    def assurance_level(self) -> AssuranceLevel:
-        return self.assurance_basis.derived_level
+    def assurance_level(self) -> AssuranceLevel | None:
+        """Deprecated: returns the level of a passed assurance_basis, else None."""
+        return _deprecated_level(self.assurance_basis)
 
 
 @dataclass(frozen=True)
@@ -82,14 +116,10 @@ class Invariant:
     """A persistent Constraint that cannot be bypassed. Violation triggers
     IMMEDIATE_TERMINAL_STATE per the spec, not an ordinary Fallback.
 
-    assurance_basis is required, same discipline as AllowedState/PreNode:
-    the source spec's own INVARIANT pseudocode example carries an
-    ASSURANCE_LEVEL field alongside PRE_NODE and ALLOWED_STATE's (only
-    INADMISSIBLE_STATE's example lacks one) -- Invariant was missed when
-    AssuranceBasis was first added to close the F1/F2 structural-
-    enforcement gap, caught later via a compliance-mapping cross-check
-    against the spec's own pseudocode. assurance_level is derived from it,
-    same pattern as AllowedState/PreNode: not settable directly.
+    `assurance_basis` is deprecated and ignored: passing it raises a
+    FutureWarning and changes nothing. Whether a gate held before its
+    action is computed from the ledger (VerbaLedger.enforcement), not
+    declared.
 
     on_violation names which TerminalState that immediate transition is
     into. It's optional (an Invariant can exist before its Terminal State
@@ -101,14 +131,18 @@ class Invariant:
     name: str
     description: str
     rule: Callable[[Any], Awaitable[bool]]
-    assurance_basis: AssuranceBasis
+    assurance_basis: AssuranceBasis = _NOT_STATED
     scope: str = "ALL_STATES"
     cannot_be_bypassed: bool = True
     on_violation: TerminalState | None = None
 
+    def __post_init__(self) -> None:
+        _warn_if_basis_passed(self.assurance_basis)
+
     @property
-    def assurance_level(self) -> AssuranceLevel:
-        return self.assurance_basis.derived_level
+    def assurance_level(self) -> AssuranceLevel | None:
+        """Deprecated: returns the level of a passed assurance_basis, else None."""
+        return _deprecated_level(self.assurance_basis)
 
 
 @dataclass(frozen=True)
@@ -127,21 +161,25 @@ class PreNode:
     into a target State -- the central VERBA construct. Every Pre-Node is
     an Eligibility Condition: a State transition without a satisfied
     Pre-Node is, by definition, Drift.
+
+    `assurance_basis` is deprecated and ignored (see Invariant).
     """
 
     name: str
     description: str
     monitor: DriftMonitor
-    assurance_basis: AssuranceBasis
+    assurance_basis: AssuranceBasis = _NOT_STATED
     gamma_threshold: float = ROBUST_GAMMA_DEFAULT_THRESHOLD
     intervention: FormationLayerIntervention | None = None
     fallback: Fallback = field(default_factory=Fallback)
 
     @property
-    def assurance_level(self) -> AssuranceLevel:
-        return self.assurance_basis.derived_level
+    def assurance_level(self) -> AssuranceLevel | None:
+        """Deprecated: returns the level of a passed assurance_basis, else None."""
+        return _deprecated_level(self.assurance_basis)
 
     def __post_init__(self) -> None:
+        _warn_if_basis_passed(self.assurance_basis)
         if self.fallback.max_retries < 0:
             raise ValueError("Fallback.max_retries must be >= 0.")
         if self.fallback.delta_factor <= 0:
