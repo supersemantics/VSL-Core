@@ -19,12 +19,20 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from .metrics import AssuranceBasis, AssuranceLevel, F2Modification, GammaEstimate, ROBUST_GAMMA_DEFAULT_THRESHOLD
 
+@dataclass(frozen=True)
+class _NotStatedBasis(AssuranceBasis):
+    """The placeholder's own type, so it is recognised by isinstance and
+    stays recognisable after copy.deepcopy() or pickling (an identity check
+    would not). Never equal to a caller's AssuranceBasis: dataclass equality
+    compares the class too."""
+
+
 # Placeholder held by a construct whose caller did not pass assurance_basis
 # (the normal case from 0.4.0). It exists only so adapters released before
 # 0.4.0, which read `construct.assurance_basis.f2_modification`, keep
 # working against this release. It states nothing: assurance_level returns
 # None for it. Removed in 1.0 along with the field.
-_NOT_STATED = AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE)
+_NOT_STATED = _NotStatedBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE)
 
 ASSURANCE_BASIS_DEPRECATION: str = (
     "assurance_basis is no longer used; enforcement is computed from the ledger "
@@ -35,7 +43,7 @@ ASSURANCE_BASIS_DEPRECATION: str = (
 def _warn_if_basis_passed(basis: AssuranceBasis) -> None:
     # Called from a construct's __post_init__: this function, __post_init__
     # and the generated __init__ sit between the warning and the caller.
-    if basis is not _NOT_STATED:
+    if not isinstance(basis, _NotStatedBasis):
         warnings.warn(ASSURANCE_BASIS_DEPRECATION, FutureWarning, stacklevel=4)
 
 
@@ -46,7 +54,7 @@ def _deprecated_level(basis: AssuranceBasis) -> AssuranceLevel | None:
         FutureWarning,
         stacklevel=3,
     )
-    if basis is _NOT_STATED:
+    if isinstance(basis, _NotStatedBasis):
         return None
     return basis.derived_level
 
@@ -66,6 +74,15 @@ class AllowedState:
     assurance_basis: AssuranceBasis = field(default=_NOT_STATED, kw_only=True)
 
     def __post_init__(self) -> None:
+        # 0.3.x order was (name, description, assurance_basis, measurement).
+        # A positional 0.3.x call would otherwise put the basis into
+        # measurement without any error.
+        if isinstance(self.measurement, AssuranceBasis) or isinstance(self.validity_conditions, str):
+            raise TypeError(
+                "AllowedState's positional arguments changed in 0.4.0: it is now "
+                "AllowedState(name, description, measurement, validity_conditions). "
+                "Pass measurement by keyword and drop assurance_basis."
+            )
         _warn_if_basis_passed(self.assurance_basis)
 
     @property

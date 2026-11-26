@@ -141,6 +141,36 @@ def test_action_records_do_not_break_the_audit():
     assert ledger.verify_integrity()
 
 
+def _append_at(ledger, timestamp, payload, decision="d1"):
+    from vsl_core import LedgerEntry, LedgerEntryType
+
+    ledger.store.append(LedgerEntry(
+        entry_type=LedgerEntryType.MONITOR, identity_key="refund-agent",
+        decision_id=decision, payload=payload, timestamp=timestamp,
+    ))
+
+
+@pytest.mark.parametrize("filler", [
+    {ACTION_KEY: {"name": "issue_refund"}, DRIFT_DETECTED_KEY: False},
+    {"handover": {"from_identity": "a", "to_identity": "b", "reason": "r"}, DRIFT_DETECTED_KEY: False},
+])
+def test_action_and_handover_records_do_not_hide_a_monitoring_gap(filler):
+    ledger = VerbaLedger()
+    _append_at(ledger, 0.0, {DRIFT_DETECTED_KEY: False})
+    for t in (5.0, 10.0, 15.0):  # frequent records that are not monitoring
+        _append_at(ledger, t, filler)
+    _append_at(ledger, 20.0, {DRIFT_DETECTED_KEY: False})
+    report = ledger.audit(max_monitor_gap_seconds=8.0)
+    assert "no_monitoring_gaps" in report.checks_failed
+
+
+def test_gate_decisions_still_count_as_monitoring():
+    ledger = VerbaLedger()
+    for t in (0.0, 5.0, 10.0):
+        _append_at(ledger, t, {"primitive_name": "refund-cap", "allowed": True, DRIFT_DETECTED_KEY: False})
+    assert "no_monitoring_gaps" in ledger.audit(max_monitor_gap_seconds=8.0).checks_passed
+
+
 def test_enforcement_survives_a_jsonl_round_trip(tmp_path):
     from vsl_core import JsonlLedgerStore
 

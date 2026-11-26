@@ -576,6 +576,10 @@ def _is_action_record(entry: LedgerEntry) -> bool:
     return entry.entry_type == LedgerEntryType.MONITOR and isinstance(entry.payload.get(ACTION_KEY), dict)
 
 
+def _is_handover_record(entry: LedgerEntry) -> bool:
+    return entry.entry_type == LedgerEntryType.MONITOR and isinstance(entry.payload.get(HANDOVER_KEY), dict)
+
+
 def _judge_enforcement(records: list[LedgerEntry], primitive_name: str | None) -> Enforcement:
     records = sorted(records, key=lambda e: e.sequence)
     gates = [
@@ -964,7 +968,13 @@ class VerbaLedger:
 
         monitor_entries = [e for e in entries if e.entry_type == LedgerEntryType.MONITOR]
         if max_monitor_gap_seconds is not None:
-            sorted_monitors = sorted(monitor_entries, key=lambda e: e.timestamp)
+            # Action and handover records are MONITOR entries too, but they
+            # record what happened, not monitoring: counting them would let
+            # frequent actions hide a real gap in monitoring.
+            sorted_monitors = sorted(
+                (e for e in monitor_entries if not (_is_action_record(e) or _is_handover_record(e))),
+                key=lambda e: e.timestamp,
+            )
             gap_violations = [
                 f"{prev.entry_id}->{curr.entry_id}"
                 for prev, curr in zip(sorted_monitors, sorted_monitors[1:])

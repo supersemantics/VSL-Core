@@ -15,12 +15,15 @@ the value they picked.
 optional and ignored: passing one raises a `FutureWarning` and changes nothing. `assurance_level`
 still exists, warns, and returns `None` unless a basis was passed. `AssuranceBasis`,
 `F2Modification` and `AssuranceLevel` still import. All of these are removed in 1.0. Positional
-arguments are unchanged for `PreNode` and `Invariant`; on `AllowedState`, `assurance_basis` became
-keyword-only, so `measurement` no longer follows it.
+arguments are unchanged for `PreNode` and `Invariant`. On `AllowedState`, `assurance_basis` became
+keyword-only, so the order is now `(name, description, measurement, validity_conditions)`; a call
+in the 0.3.x positional order raises `TypeError` instead of silently putting the basis into
+`measurement`.
 
 **Compatibility:** adapters released before 0.4.0 read `construct.assurance_basis.f2_modification`.
 A construct built without a basis holds a placeholder, so those reads keep working and never look
-like a FULL claim. The conformance suite no longer passes a basis.
+like a FULL claim. The placeholder has its own private type, so it is still recognised after
+`copy.deepcopy()` or pickling. The conformance suite no longer passes a basis.
 
 ### Added: action records and `enforcement()`
 
@@ -29,7 +32,15 @@ action ran: a MONITOR entry (`drift_detected` False) with an `ACTION_KEY` (`"act
 `{name}`. `VerbaLedger.enforcement(decision_id)` compares the decision's gate records with its action
 records and returns an `Enforcement`: `BEFORE_ACTION`, `AFTER_ACTION` or `NOT_OBSERVED`.
 `enforcement_by_decision()` does it for every decision. No new entry type: every ledger store
-accepts the records as is. `audit()` keeps its five checks, so certificates are unchanged.
+accepts the records as is. `audit()` keeps its five checks.
+
+### Fixed: action and handover records no longer count as monitoring
+
+`audit(max_monitor_gap_seconds=...)` used to count every MONITOR entry when looking for gaps,
+including handover records (0.3.0) and now action records. Frequent actions could hide a real gap
+in monitoring. The gap check now skips both; gate decisions and plain monitor entries still count.
+A ledger with handovers can therefore fail `no_monitoring_gaps` where 0.3.x passed it, when the
+only records in a gap were handovers.
 
 **Why:** a declared level said what the developer believed, not what happened. Whether a gate ran
 before its action is a fact the ledger can show, so vsl-core now computes it from the records.

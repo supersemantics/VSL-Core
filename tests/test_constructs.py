@@ -58,6 +58,18 @@ def test_allowed_state_assurance_level_is_not_a_constructor_argument():
         )
 
 
+def test_allowed_state_old_positional_order_fails_loudly():
+    # 0.3.x order: (name, description, assurance_basis, measurement).
+    with pytest.raises(TypeError, match="positional arguments changed in 0.4.0"):
+        AllowedState("s", "d", _LEGACY_BASIS, "m")  # type: ignore[arg-type]
+
+
+def test_allowed_state_new_positional_order_works():
+    state = _no_warnings(lambda: AllowedState("s", "d", "m", ("c",)))
+    assert state.measurement == "m"
+    assert state.validity_conditions == ("c",)
+
+
 def test_inadmissible_state_construction():
     state = InadmissibleState(
         name="hallucination_attractor",
@@ -130,6 +142,29 @@ def test_adapters_released_before_0_4_0_can_still_read_the_placeholder():
     invariant = Invariant(name=_unique_name("inv"), description="d", rule=_always_true)
     for construct in (node, invariant):
         assert construct.assurance_basis.f2_modification != F2Modification.FULL
+
+
+@pytest.mark.parametrize("copier", ["deepcopy", "pickle"])
+def test_placeholder_survives_copying(copier):
+    import copy
+    import pickle
+
+    node = PreNode(name="gate", description="d", monitor=_stub_monitor)
+    invariant = Invariant(name="inv-copy", description="d", rule=_always_true)
+    for construct in (node, invariant):
+        if copier == "deepcopy":
+            copied = copy.deepcopy(construct)
+        else:
+            copied = pickle.loads(pickle.dumps(construct.assurance_basis))
+            copied = type(construct)(**{**construct.__dict__, "assurance_basis": copied})
+        with pytest.warns(FutureWarning, match="assurance_level is deprecated"):
+            assert copied.assurance_level is None
+
+
+def test_a_caller_basis_equal_in_value_to_the_placeholder_still_warns():
+    same_values = AssuranceBasis(f1_pre_commitment=True, f2_modification=F2Modification.NONE)
+    with pytest.warns(FutureWarning):
+        Invariant(name="inv-eq", description="d", rule=_always_true, assurance_basis=same_values)
 
 
 def test_invariant_on_violation_defaults_to_none():
