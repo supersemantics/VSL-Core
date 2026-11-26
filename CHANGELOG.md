@@ -2,7 +2,7 @@
 
 What changed in each release, and why. Newest first.
 
-## 0.4.0 (unreleased): enforcement is computed, not declared
+## 0.4.0 (2026-11-26, tag `v0.4.0`): enforcement is computed, not declared
 
 ### Changed: constructs no longer take an assurance claim
 
